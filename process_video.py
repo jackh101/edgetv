@@ -59,6 +59,7 @@ cmd_dl = [
     "-S", "res:1080,codec:h264",
     "--merge-output-format", "mp4",
     "--force-ipv4",
+    "--proxy", "socks5://127.0.0.1:1080",          # ← Cloudflare WARP
     "--retries", "25",
     "--fragment-retries", "25",
     "--retry-sleep", "5",
@@ -74,7 +75,7 @@ cmd_dl = [
 if has_cookies:
     cmd_dl.extend(["--cookies", cookie_file])
 
-print("Running download command...", flush=True)
+print("Running download command with Cloudflare WARP proxy...", flush=True)
 proc = subprocess.Popen(cmd_dl, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
 for line in iter(proc.stdout.readline, ''):
@@ -104,7 +105,7 @@ subprocess.run(cmd_ffmpeg, check=True)
 if os.path.exists(raw_video):
     os.remove(raw_video)
 
-# Upload to Supabase Storage
+# Upload to Supabase
 bucket_path = f"videos/{processed_video}"
 print("Uploading HD video to Supabase Storage...", flush=True)
 with open(processed_video, 'rb') as f:
@@ -112,7 +113,6 @@ with open(processed_video, 'rb') as f:
         bucket_path, f, {"content-type": "video/mp4"}
     )
 
-# Update database with public URL
 public_url = supabase.storage.from_("processed-videos").get_public_url(bucket_path)
 supabase.table("edge_library_log").update({"processed_video_url": public_url}).eq("song_id", song_id).execute()
 

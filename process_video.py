@@ -60,4 +60,60 @@ cmd_dl = [
     "--merge-output-format", "mp4",
     "--force-ipv4",
     "--retries", "25",
-    "--
+    "--fragment-retries", "25",
+    "--retry-sleep", "5",
+    "--sleep-interval", "3",
+    "--max-sleep-interval", "8",
+    "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+    "--extractor-args", "youtube:player_client=mweb,tv_downgraded,android_vr;player_skip=webpage",
+    "--rm-cache-dir",
+    "-o", raw_video,
+    "--no-playlist",
+]
+
+if has_cookies:
+    cmd_dl.extend(["--cookies", cookie_file])
+
+print("Running download command...", flush=True)
+proc = subprocess.Popen(cmd_dl, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+for line in iter(proc.stdout.readline, ''):
+    print(line, end='', flush=True)
+
+proc.stdout.close()
+return_code = proc.wait()
+
+if os.path.exists(cookie_file):
+    os.remove(cookie_file)
+
+if return_code != 0:
+    raise subprocess.CalledProcessError(return_code, cmd_dl)
+
+# Apply exact 2% speed boost
+cmd_ffmpeg = [
+    "ffmpeg", "-y", "-i", raw_video,
+    "-filter_complex", "[0:v]setpts=PTS/1.02[v];[0:a]atempo=1.02[a]",
+    "-map", "[v]", "-map", "[a]",
+    "-c:v", "libx264", "-crf", "20", "-preset", "faster",
+    "-c:a", "aac", "-b:a", "192k",
+    processed_video
+]
+print("Applying 2% speed boost with FFmpeg...", flush=True)
+subprocess.run(cmd_ffmpeg, check=True)
+
+if os.path.exists(raw_video):
+    os.remove(raw_video)
+
+# Upload to Supabase Storage
+bucket_path = f"videos/{processed_video}"
+print("Uploading HD video to Supabase Storage...", flush=True)
+with open(processed_video, 'rb') as f:
+    supabase.storage.from_("processed-videos").upload(
+        bucket_path, f, {"content-type": "video/mp4"}
+    )
+
+# Update database with public URL
+public_url = supabase.storage.from_("processed-videos").get_public_url(bucket_path)
+supabase.table("edge_library_log").update({"processed_video_url": public_url}).eq("song_id", song_id).execute()
+
+print(f"🎉 Successfully processed video: {public_url}", flush=True)

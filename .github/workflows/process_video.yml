@@ -28,10 +28,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Restore/Save yt-dlp OAuth Credentials
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yt-dlp
+          key: yt-dlp-oauth-${{ runner.os }}
+
       - name: Install System & Python Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install --upgrade requests yt-dlp supabase
+          pip install --upgrade yt-dlp supabase
 
       - name: Run Video Processor
         env:

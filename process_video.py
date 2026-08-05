@@ -53,17 +53,20 @@ print(f"🎵 Searching & Downloading HD video for: {artist} - {title}...", flush
 
 cmd_dl = [
     "yt-dlp",
+    "-v",
     f"ytsearch1:{search_query}",
     "-f", "bestvideo*[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
     "-S", "res:1080,codec:h264",
     "--merge-output-format", "mp4",
     "--force-ipv4",
-    "--retries", "15",
-    "--fragment-retries", "15",
-    "--retry-sleep", "3",
-    "--sleep-interval", "2",
-    "--max-sleep-interval", "6",
-    "--extractor-args", "youtube:player_client=tv_downgraded,android_vr,mweb,web_embedded;player_skip=webpage",
+    "--retries", "20",
+    "--fragment-retries", "20",
+    "--retry-sleep", "5",
+    "--sleep-interval", "3",
+    "--max-sleep-interval", "8",
+    "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+    "--extractor-args", "youtube:player_client=mweb,tv_downgraded,android_vr;player_skip=webpage",
+    "--rm-cache-dir",
     "-o", raw_video,
     "--no-playlist",
 ]
@@ -71,6 +74,7 @@ cmd_dl = [
 if has_cookies:
     cmd_dl.extend(["--cookies", cookie_file])
 
+print("Running download command...", flush=True)
 proc = subprocess.Popen(cmd_dl, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
 for line in iter(proc.stdout.readline, ''):
@@ -85,7 +89,7 @@ if os.path.exists(cookie_file):
 if return_code != 0:
     raise subprocess.CalledProcessError(return_code, cmd_dl)
 
-# Speed up Video & Audio by exactly 2%
+# Apply exact 2% speed boost
 cmd_ffmpeg = [
     "ffmpeg", "-y", "-i", raw_video,
     "-filter_complex", "[0:v]setpts=PTS/1.02[v];[0:a]atempo=1.02[a]",
@@ -108,7 +112,7 @@ with open(processed_video, 'rb') as f:
         bucket_path, f, {"content-type": "video/mp4"}
     )
 
-# Save public URL back to database
+# Update database with public URL
 public_url = supabase.storage.from_("processed-videos").get_public_url(bucket_path)
 supabase.table("edge_library_log").update({"processed_video_url": public_url}).eq("song_id", song_id).execute()
 

@@ -18,29 +18,40 @@ raw_video = f"temp_{song_id}.mp4"
 processed_video = f"{song_id}_2pc.mp4"
 cookie_file = "cookies.txt"
 
-# Prepare cookie file if secret exists
 has_cookies = False
 if YOUTUBE_COOKIES_RAW:
     print("🔑 Parsing YOUTUBE_COOKIES secret...", flush=True)
-    lines = ["# Netscape HTTP Cookie File\n"]
     
-    # Extract cookies if pasted as cURL string or header format
-    match = re.search(r"cookie:\s*([^'\"]+)", YOUTUBE_COOKIES_RAW, re.IGNORECASE)
-    cookie_str = match.group(1) if match else YOUTUBE_COOKIES_RAW
-
-    for pair in cookie_str.split(";"):
-        if "=" in pair:
-            parts = pair.strip().split("=", 1)
-            if len(parts) == 2:
-                k, v = parts[0].strip(), parts[1].strip()
-                lines.append(f".youtube.com\tTRUE\t/\tFALSE\t0\t{k}\t{v}\n")
-    
-    if len(lines) > 1:
+    # Case A: If pasted as a native Netscape cookies.txt file directly
+    if "# Netscape HTTP Cookie File" in YOUTUBE_COOKIES_RAW:
         with open(cookie_file, "w") as f:
-            f.writelines(lines)
+            f.write(YOUTUBE_COOKIES_RAW)
         has_cookies = True
-else:
-    print("⚠️ No YOUTUBE_COOKIES secret found. Proceeding with standard solver...", flush=True)
+    else:
+        # Case B: User pasted a cURL command or raw Cookie header (potentially multi-line)
+        flat_text = YOUTUBE_COOKIES_RAW.replace('\\\n', ' ').replace('\n', ' ')
+        
+        # Extract the Cookie header value
+        match = re.search(r"(?:-h\s+['\"]?cookie:\s*|cookie:\s*)([^'\"]+)", flat_text, re.IGNORECASE)
+        cookie_str = match.group(1).strip() if match else flat_text
+        
+        lines = ["# Netscape HTTP Cookie File\n"]
+        count = 0
+        for pair in cookie_str.split(";"):
+            pair = pair.strip()
+            if "=" in pair:
+                parts = pair.split("=", 1)
+                k, v = parts[0].strip(), parts[1].strip()
+                # Ignore cURL flags and non-cookie headers
+                if k and v and not k.startswith("-") and " " not in k and not k.lower().startswith("sec-"):
+                    lines.append(f".youtube.com\tTRUE\t/\tFALSE\t0\t{k}\t{v}\n")
+                    count += 1
+        
+        if count > 0:
+            with open(cookie_file, "w") as f:
+                f.writelines(lines)
+            has_cookies = True
+            print(f"✅ Extracted {count} authentication cookies.", flush=True)
 
 search_query = f"{artist} {title} official music video"
 print(f"🎵 Searching & Downloading HD video for: {artist} - {title}...", flush=True)
@@ -96,4 +107,4 @@ with open(processed_video, 'rb') as f:
 public_url = supabase.storage.from_("processed-videos").get_public_url(bucket_path)
 supabase.table("edge_library_log").update({"processed_video_url": public_url}).eq("song_id", song_id).execute()
 
-print(f"✅ Successfully processed video: {public_url}", flush=True)
+print(f"🎉 Successfully processed video: {public_url}", flush=True)

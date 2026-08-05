@@ -28,14 +28,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup Pre-built yt-dlp & FFmpeg
-        uses: AnimMouse/setup-yt-dlp@v3
-        with:
-          nightly: true
-
-      - name: Install Python Dependencies
+      - name: Install System & Python Dependencies
         run: |
-          pip install supabase
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install --upgrade requests yt-dlp supabase
 
       - name: Run Video Processor
         env:

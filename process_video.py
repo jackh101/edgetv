@@ -3,7 +3,6 @@ import os
 import subprocess
 from supabase import create_client
 
-# Read arguments passed from GitHub Action
 song_id = sys.argv[1]
 artist = sys.argv[2]
 title = sys.argv[3]
@@ -16,17 +15,32 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 raw_video = f"temp_{song_id}.mp4"
 processed_video = f"{song_id}_2pc.mp4"
 
-# 1. Download best 1080p MP4 music video using mobile player clients to bypass datacenter bot detection
-query = f"ytsearch1:{artist} {title} official music video"
-cmd_dl = [
-    "yt-dlp", query,
-    "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-    "--merge-output-format", "mp4",
-    "--extractor-args", "youtube:player_client=ios,android,mweb",
-    "-o", raw_video
+# Client rotation strategy to bypass YouTube cloud IP bot detection
+clients = [
+    "tv_downgraded,web_creator",
+    "android_vr,web",
+    "tv,web_embedded"
 ]
-print(f"Downloading HD video for: {artist} - {title}...")
-subprocess.run(cmd_dl, check=True)
+
+download_success = False
+query = f"ytsearch1:{artist} {title} official music video"
+
+for client in clients:
+    print(f"Downloading HD video for: {artist} - {title} (Strategy: {client})...")
+    cmd_dl = [
+        "yt-dlp", query,
+        "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "--extractor-args", f"youtube:player_client={client}",
+        "-o", raw_video
+    ]
+    res = subprocess.run(cmd_dl)
+    if res.returncode == 0 and os.path.exists(raw_video):
+        download_success = True
+        break
+
+if not download_success:
+    raise Exception("Failed to download video: YouTube blocked all client strategies.")
 
 # 2. Speed up Video & Audio by 2%
 cmd_ffmpeg = [

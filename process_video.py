@@ -1,0 +1,43 @@
+name: Process 2pc Video
+
+on:
+  repository_dispatch:
+    types: [process_new_song]
+  workflow_dispatch:
+    inputs:
+      song_id:
+        description: 'Song EXT / ID'
+        required: true
+      artist:
+        description: 'Artist Name'
+        required: true
+      title:
+        description: 'Song Title'
+        required: true
+
+jobs:
+  build-and-process:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install yt-dlp supabase
+
+      - name: Run Video Processor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          PYTHON_SONG_ID="${{ github.event.client_payload.song_id || github.event.inputs.song_id }}"
+          PYTHON_ARTIST="${{ github.event.client_payload.artist || github.event.inputs.artist }}"
+          PYTHON_TITLE="${{ github.event.client_payload.title || github.event.inputs.title }}"
+          python process_video.py "$PYTHON_SONG_ID" "$PYTHON_ARTIST" "$PYTHON_TITLE"

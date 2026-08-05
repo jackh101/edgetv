@@ -1,69 +1,44 @@
-import sys
-import os
-import subprocess
-from supabase import create_client
+name: Process 2pc Video
 
-song_id = sys.argv[1]
-artist = sys.argv[2]
-title = sys.argv[3]
+on:
+  repository_dispatch:
+    types: [process_new_song]
+  workflow_dispatch:
+    inputs:
+      song_id:
+        description: 'Song EXT / ID'
+        required: true
+      artist:
+        description: 'Artist Name'
+        required: true
+      title:
+        description: 'Song Title'
+        required: true
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+jobs:
+  build-and-process:
+    runs-on: ubuntu-latest
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-raw_video = f"temp_{song_id}.mp4"
-processed_video = f"{song_id}_2pc.mp4"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-# Client rotation strategy to bypass YouTube cloud IP bot detection
-clients = [
-    "tv_downgraded,web_creator",
-    "android_vr,web",
-    "tv,web_embedded"
-]
+      - name: Install System & Python Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install requests yt-dlp supabase
 
-download_success = False
-query = f"ytsearch1:{artist} {title} official music video"
-
-for client in clients:
-    print(f"Downloading HD video for: {artist} - {title} (Strategy: {client})...")
-    cmd_dl = [
-        "yt-dlp", query,
-        "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--merge-output-format", "mp4",
-        "--extractor-args", f"youtube:player_client={client}",
-        "-o", raw_video
-    ]
-    res = subprocess.run(cmd_dl)
-    if res.returncode == 0 and os.path.exists(raw_video):
-        download_success = True
-        break
-
-if not download_success:
-    raise Exception("Failed to download video: YouTube blocked all client strategies.")
-
-# 2. Speed up Video & Audio by 2%
-cmd_ffmpeg = [
-    "ffmpeg", "-y", "-i", raw_video,
-    "-filter_complex", "[0:v]setpts=PTS/1.02[v];[0:a]atempo=1.02[a]",
-    "-map", "[v]", "-map", "[a]",
-    "-c:v", "libx264", "-crf", "20", "-preset", "faster",
-    "-c:a", "aac", "-b:a", "192k",
-    processed_video
-]
-print("Applying 2% speed boost...")
-subprocess.run(cmd_ffmpeg, check=True)
-
-# 3. Upload MP4 to Supabase Storage Bucket ('processed-videos')
-bucket_path = f"videos/{processed_video}"
-print("Uploading HD video to Supabase Storage...")
-with open(processed_video, 'rb') as f:
-    supabase.storage.from_("processed-videos").upload(
-        bucket_path, f, {"content-type": "video/mp4"}
-    )
-
-# 4. Save Public Video URL back to Supabase Table
-public_url = supabase.storage.from_("processed-videos").get_public_url(bucket_path)
-supabase.table("edge_library_log").update({"processed_video_url": public_url}).eq("song_id", song_id).execute()
-
-print(f"Successfully processed video: {public_url}")
+      - name: Run Video Processor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          PYTHON_SONG_ID="${{ github.event.client_payload.song_id || github.event.inputs.song_id }}"
+          PYTHON_ARTIST="${{ github.event.client_payload.artist || github.event.inputs.artist }}"
+          PYTHON_TITLE="${{ github.event.client_payload.title || github.event.inputs.title }}"
+          python process_video.py "$PYTHON_SONG_ID" "$PYTHON_ARTIST" "$PYTHON_TITLE"

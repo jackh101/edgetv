@@ -10,7 +10,7 @@ title = sys.argv[3]
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-YOUTUBE_COOKIES_RAW = os.environ.get("YOUTUBE_COOKIES", "")
+YOUTUBE_COOKIES_RAW = os.environ.get("YOUTUBE_COOKIES", "").strip()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -18,16 +18,16 @@ raw_video = f"temp_{song_id}.mp4"
 processed_video = f"{song_id}_2pc.mp4"
 cookie_file = "cookies.txt"
 
-# Smart Parser: Converts raw cURL string or header text into a Netscape cookie file
-def prepare_cookie_file(raw_text, filepath):
-    if not raw_text:
-        return False
-    
-    # Extract cookies if pasted as a full cURL command
-    match = re.search(r"cookie:\s*([^'\"]+)", raw_text, re.IGNORECASE)
-    cookie_str = match.group(1) if match else raw_text
-
+# Prepare cookie file if secret exists
+has_cookies = False
+if YOUTUBE_COOKIES_RAW:
+    print("🔑 Parsing YOUTUBE_COOKIES secret...", flush=True)
     lines = ["# Netscape HTTP Cookie File\n"]
+    
+    # Extract cookies if pasted as cURL string or header format
+    match = re.search(r"cookie:\s*([^'\"]+)", YOUTUBE_COOKIES_RAW, re.IGNORECASE)
+    cookie_str = match.group(1) if match else YOUTUBE_COOKIES_RAW
+
     for pair in cookie_str.split(";"):
         if "=" in pair:
             parts = pair.strip().split("=", 1)
@@ -36,12 +36,11 @@ def prepare_cookie_file(raw_text, filepath):
                 lines.append(f".youtube.com\tTRUE\t/\tFALSE\t0\t{k}\t{v}\n")
     
     if len(lines) > 1:
-        with open(filepath, "w") as f:
+        with open(cookie_file, "w") as f:
             f.writelines(lines)
-        return True
-    return False
-
-has_cookies = prepare_cookie_file(YOUTUBE_COOKIES_RAW, cookie_file)
+        has_cookies = True
+else:
+    print("⚠️ No YOUTUBE_COOKIES secret found. Proceeding with standard solver...", flush=True)
 
 search_query = f"{artist} {title} official music video"
 print(f"🎵 Searching & Downloading HD video for: {artist} - {title}...", flush=True)
@@ -54,7 +53,6 @@ cmd_dl = [
 ]
 
 if has_cookies:
-    print("🔑 Authenticating with YouTube session cookies...", flush=True)
     cmd_dl.extend(["--cookies", cookie_file])
 
 proc = subprocess.Popen(cmd_dl, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -65,7 +63,6 @@ for line in iter(proc.stdout.readline, ''):
 proc.stdout.close()
 return_code = proc.wait()
 
-# Clean up cookie file from memory
 if os.path.exists(cookie_file):
     os.remove(cookie_file)
 

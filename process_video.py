@@ -15,9 +15,9 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 processed_video = f"{song_id}_2pc.mp4"
 
-# 1. Search YouTube for Video ID (Flat search never triggers bot checks)
+# 1. Search YouTube for Video ID (Flat search only fetches text metadata and is never blocked)
 search_query = f"{artist} {title} official music video"
-print(f"🎵 Searching YouTube for: {search_query}...")
+print(f"🎵 Searching YouTube for ID: {search_query}...")
 
 cmd_search = [
     "yt-dlp", f"ytsearch1:{search_query}",
@@ -27,67 +27,56 @@ cmd_search = [
 yt_id = subprocess.check_output(cmd_search).decode("utf-8").strip()
 print(f"Found YouTube Video ID: {yt_id}")
 
-# 2. Fetch direct media streams via Piped Proxy API (No cookies required!)
-piped_instances = [
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.adminforge.de",
-    "https://pipedapi.leptons.xyz",
-    "https://api.piped.yt",
-    "https://pipedapi.privacy.com.de"
-]
+# 2. Fetch official live proxy list dynamically from the Invidious registry
+print("Fetching active proxy list from Invidious registry...")
+instance_list_url = "https://api.invidious.io/instances.json?sort_by=health"
+resp = requests.get(instance_list_url, timeout=10)
+instances_data = resp.json()
 
-video_url = None
-audio_url = None
+# Filter for active HTTPS instances with API enabled
+live_instances = []
+for item in instances_data:
+    domain = item[0]
+    info = item[1]
+    if info.get("type") == "https" and info.get("api") == True:
+        live_instances.append(f"https://{domain}")
 
-for base in piped_instances:
+print(f"Found {len(live_instances)} active proxy instances.")
+
+video_stream_url = None
+
+# Loop through live proxies until one returns a working video stream
+for base_url in live_instances:
     try:
-        print(f"Fetching stream via proxy {base}...")
-        res = requests.get(f"{base}/streams/{yt_id}", timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            v_streams = data.get("videoStreams", [])
-            a_streams = data.get("audioStreams", [])
+        api_endpoint = f"{base_url}/api/v1/videos/{yt_id}"
+        print(f"Testing live proxy: {base_url}...")
+        r = requests.get(api_endpoint, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            format_streams = data.get("formatStreams", [])
             
-            # Find progressive video stream (video + audio in one stream)
-            combined = [s for s in v_streams if not s.get("videoOnly", True)]
-            if combined:
-                video_url = combined[0]["url"]
-                print(f"✅ Secured combined stream from {base}")
-                break
-            elif v_streams and a_streams:
-                video_url = v_streams[0]["url"]
-                audio_url = a_streams[0]["url"]
-                print(f"✅ Secured video & audio streams from {base}")
-                break
+            if format_streams:
+                video_stream_url = format_streams[0].get("url")
+                if video_stream_url:
+                    print(f"✅ Secured stream from {base_url}")
+                    break
     except Exception as e:
-        print(f"Proxy instance {base} skipped: {e}")
+        print(f"Proxy {base_url} busy/skipped: {e}")
 
-if not video_url:
-    raise Exception("Unable to reach Piped proxy network for video stream.")
+if not video_stream_url:
+    raise Exception("Could not retrieve stream from any live proxy instances.")
 
 # 3. Stream & apply 2% speed boost directly with FFmpeg
 print("Applying 2% speed boost with FFmpeg...")
-if audio_url:
-    cmd_ffmpeg = [
-        "ffmpeg", "-y",
-        "-i", video_url,
-        "-i", audio_url,
-        "-filter_complex", "[0:v]setpts=PTS/1.02[v];[1:a]atempo=1.02[a]",
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-crf", "20", "-preset", "faster",
-        "-c:a", "aac", "-b:a", "192k",
-        processed_video
-    ]
-else:
-    cmd_ffmpeg = [
-        "ffmpeg", "-y",
-        "-i", video_url,
-        "-filter_complex", "[0:v]setpts=PTS/1.02[v];[0:a]atempo=1.02[a]",
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-crf", "20", "-preset", "faster",
-        "-c:a", "aac", "-b:a", "192k",
-        processed_video
-    ]
+cmd_ffmpeg = [
+    "ffmpeg", "-y",
+    "-i", video_stream_url,
+    "-filter_complex", "[0:v]setpts=PTS/1.02[v];[0:a]atempo=1.02[a]",
+    "-map", "[v]", "-map", "[a]",
+    "-c:v", "libx264", "-crf", "20", "-preset", "faster",
+    "-c:a", "aac", "-b:a", "192k",
+    processed_video
+]
 
 subprocess.run(cmd_ffmpeg, check=True)
 

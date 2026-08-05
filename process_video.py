@@ -16,12 +16,13 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 raw_video = f"temp_{song_id}.mp4"
 processed_video = f"{song_id}_2pc.mp4"
 
-# 1. Download best 1080p MP4 music video
+# 1. Download best 1080p MP4 music video using mobile player clients to bypass datacenter bot detection
 query = f"ytsearch1:{artist} {title} official music video"
 cmd_dl = [
     "yt-dlp", query,
     "-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
     "--merge-output-format", "mp4",
+    "--extractor-args", "youtube:player_client=ios,android,mweb",
     "-o", raw_video
 ]
 print(f"Downloading HD video for: {artist} - {title}...")

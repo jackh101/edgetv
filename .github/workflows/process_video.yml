@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up Deno (Required for YouTube JS Solver)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Install System & Python Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -38,6 +43,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           PYTHON_SONG_ID="${{ github.event.client_payload.song_id || github.event.inputs.song_id }}"
           PYTHON_ARTIST="${{ github.event.client_payload.artist || github.event.inputs.artist }}"

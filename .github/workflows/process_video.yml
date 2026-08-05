@@ -34,7 +34,8 @@ jobs:
       - name: Install System & Python Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install --upgrade yt-dlp supabase
+          pip install --upgrade supabase
+          pip install --upgrade https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 
       - name: Run Video Processor
         env:

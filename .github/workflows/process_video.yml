@@ -28,15 +28,26 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Set up Deno (Required for YouTube JS Solver)
+      - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
-      - name: Install System & Python Dependencies
+      - name: Install System Dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install --upgrade "yt-dlp[default]" supabase requests
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade "yt-dlp[default]" supabase requests bgutil-ytdlp-pot-provider
+          yt-dlp --update-to nightly || true
+
+      - name: Start bgutil POT Provider
+        run: |
+          docker run -d --name bgutil-provider -p 4416:4416 --init brainicism/bgutil-ytdlp-pot-provider
+          sleep 6
+          curl -s http://127.0.0.1:4416/ping || echo "POT server is starting..."
 
       - name: Run Video Processor
         env:

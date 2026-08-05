@@ -45,9 +45,17 @@ jobs:
 
       - name: Start bgutil POT Provider
         run: |
+          docker pull brainicism/bgutil-ytdlp-pot-provider
           docker run -d --name bgutil-provider -p 4416:4416 --init brainicism/bgutil-ytdlp-pot-provider
-          sleep 6
-          curl -s http://127.0.0.1:4416/ping || echo "POT server is starting..."
+          echo "Waiting for POT server to become ready..."
+          for i in {1..20}; do
+            if curl -s http://127.0.0.1:4416/ping > /dev/null; then
+              echo "✅ POT server is ready"
+              break
+            fi
+            echo "Still waiting... ($i)"
+            sleep 2
+          done
 
       - name: Run Video Processor
         env:

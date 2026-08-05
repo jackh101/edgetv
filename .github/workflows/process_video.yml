@@ -28,21 +28,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Restore/Save yt-dlp OAuth Credentials
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/yt-dlp
-          key: yt-dlp-oauth-${{ runner.os }}
-
       - name: Install System & Python Dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install --upgrade yt-dlp supabase
+          pip install --upgrade requests yt-dlp supabase
 
       - name: Run Video Processor
         env:
+          PYTHONUNBUFFERED: "1"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
         run: |
           PYTHON_SONG_ID="${{ github.event.client_payload.song_id || github.event.inputs.song_id }}"
           PYTHON_ARTIST="${{ github.event.client_payload.artist || github.event.inputs.artist }}"

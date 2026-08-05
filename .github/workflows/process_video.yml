@@ -36,29 +36,46 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg curl
+          sudo apt-get install -y ffmpeg curl wireguard-tools
 
       - name: Install Python packages
         run: |
           pip install --upgrade "yt-dlp[default]" supabase requests bgutil-ytdlp-pot-provider
           yt-dlp --update-to nightly || true
 
+      - name: Setup Cloudflare WARP Proxy
+        run: |
+          # Install wgcf (Cloudflare WARP config generator)
+          curl -fsSL -o wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64
+          chmod +x wgcf
+          ./wgcf register --accept-tos
+          ./wgcf generate
+
+          # Install wireproxy
+          curl -fsSL -o wireproxy.tar.gz https://github.com/pufferffish/wireproxy/releases/download/v1.0.9/wireproxy_linux_amd64.tar.gz
+          tar -xzf wireproxy.tar.gz
+          chmod +x wireproxy
+
+          # Add SOCKS5 section to the config
+          echo -e "\n[Socks5]\nBindAddress = 127.0.0.1:1080" >> wgcf-profile.conf
+
+          # Start the proxy in background
+          ./wireproxy -c wgcf-profile.conf &
+          sleep 5
+          echo "Cloudflare WARP proxy started on socks5://127.0.0.1:1080"
+
       - name: Start bgutil POT Provider
         run: |
           docker pull brainicism/bgutil-ytdlp-pot-provider
           docker rm -f bgutil-provider || true
           docker run -d --name bgutil-provider -p 4416:4416 --init brainicism/bgutil-ytdlp-pot-provider
-          echo "Waiting for POT server..."
-          for i in {1..25}; do
+          for i in {1..20}; do
             if curl -sf http://127.0.0.1:4416/ping; then
-              echo ""
-              echo "✅ POT server is ready"
+              echo "✅ POT server ready"
               break
             fi
-            echo "Waiting... ($i)"
             sleep 2
           done
-          curl -s http://127.0.0.1:4416/ping || echo "WARNING: POT server may not be fully ready"
 
       - name: Run Video Processor
         env:

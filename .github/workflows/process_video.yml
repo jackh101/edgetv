@@ -58,7 +58,6 @@ jobs:
             echo "Waiting... ($i)"
             sleep 2
           done
-          # Extra check
           curl -s http://127.0.0.1:4416/ping || echo "WARNING: POT server may not be fully ready"
 
       - name: Run Video Processor

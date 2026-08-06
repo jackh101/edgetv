@@ -119,6 +119,7 @@
     GOOGLE_CLIENT_ID: '84564291457-e27vbeaaeabvas5ids2l330omveop84g.apps.googleusercontent.com',
     SHEET_ID:         '1Y0wuEyRiPZhoVsUdDyCcK2m_YRXqtrB-81aoR33A5MM',
     SHEET_RANGE:      'Importer!A3:T',
+    EXPORT_SHEET_ID:  '1llPZ5Q0QicyIImiQLFaNBKm4-32TZ4gG8lscF-CDlSo',
     POLL_INTERVAL_MS: 8000,
     MAX_CARDS:        500,
     TABLE:            'edge_library_log'
@@ -151,6 +152,8 @@
   let tokenClient = null;
   let accessToken = null;
   let currentFilter = '';
+  let exportSheetTitle = null;
+  const sheetSongIds = new Set();
 
   const $ = (id) => document.getElementById(id);
 
@@ -193,7 +196,7 @@
     if (!window.google?.accounts?.oauth2) { setTimeout(initGoogle, 300); return; }
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
+      scope: 'https://www.googleapis.com/auth/spreadsheets',
       callback: async (resp) => {
         if (resp.error || !resp.access_token) {
           $('auth-error').textContent = 'Google Authentication failed. Please try again.';
@@ -383,6 +386,9 @@
         .then(({ error }) => { if (error) console.error('[Supabase] Insert error:', error.message); });
     }
 
+    // 2b. Mirror to the export sheet, exactly once per unique EXT ID
+    syncSongToSheet(row);
+
     // 3. Fetch iTunes Artwork in background
     const art = await fetchArtwork(item.artist, item.title, item.imageUrl);
     if (art && art !== row.artwork_url) {
@@ -504,6 +510,79 @@
     }
   });
 
+  // ---- Export sheet: mirror each unique song once (EXT ID, ARTIST, TITLE) ----
+  async function initExportSheet() {
+    if (!accessToken) return false;
+    try {
+      // Resolve the tab title behind gid=0
+      const metaUrl = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.EXPORT_SHEET_ID}?fields=sheets.properties`;
+      const metaRes = await fetch(metaUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
+      if (!metaRes.ok) throw new Error('meta HTTP ' + metaRes.status);
+      const meta = await metaRes.json();
+      const first = (meta.sheets || []).find(s => s.properties?.sheetId === 0) || (meta.sheets || [])[0];
+      exportSheetTitle = first?.properties?.title || 'Sheet1';
+
+      // Read existing EXT IDs (col A) so a song is never written twice
+      const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.EXPORT_SHEET_ID}/values/${encodeURIComponent(exportSheetTitle + '!A:A')}`;
+      const readRes = await fetch(readUrl, { headers: { Authorization: 'Bearer ' + accessToken } });
+      const readData = readRes.ok ? await readRes.json() : { values: [] };
+      const rows = readData.values || [];
+      rows.forEach(r => { const v = String(r[0] || '').trim(); if (v && v !== 'EXT ID') sheetSongIds.add(v); });
+
+      // Lay down a header row if the sheet is completely empty
+      if (rows.length === 0) await appendSheetRows([['EXT ID', 'ARTIST', 'TITLE']]);
+      return true;
+    } catch (e) {
+      console.error('[Export] init failed:', e.message);
+      return false;
+    }
+  }
+
+  async function appendSheetRows(values) {
+    if (!accessToken || !exportSheetTitle || !values.length) return;
+    // RAW keeps EXT IDs as text, preserving leading zeros
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${CONFIG.EXPORT_SHEET_ID}/values/${encodeURIComponent(exportSheetTitle + '!A:C')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values })
+    });
+    if (!res.ok) throw new Error('append HTTP ' + res.status);
+  }
+
+  // One-shot: push everything already in the DB that isn't in the sheet yet
+  async function backfillExportSheet() {
+    if (!exportSheetTitle) return;
+    const pending = [];
+    for (const t of tracks.values()) {
+      if (t.song_id && !sheetSongIds.has(t.song_id)) {
+        sheetSongIds.add(t.song_id);
+        pending.push([t.song_id, t.artist || '', t.title || '']);
+      }
+    }
+    if (!pending.length) return;
+    try {
+      await appendSheetRows(pending);
+      console.log(`[Export] Backfilled ${pending.length} songs.`);
+    } catch (e) {
+      pending.forEach(r => sheetSongIds.delete(r[0]));
+      console.error('[Export] backfill failed:', e.message);
+    }
+  }
+
+  // Mirror a single freshly-discovered song, exactly once
+  async function syncSongToSheet(row) {
+    if (!exportSheetTitle || !row?.song_id) return;
+    if (sheetSongIds.has(row.song_id)) return;
+    sheetSongIds.add(row.song_id);
+    try {
+      await appendSheetRows([[row.song_id, row.artist || '', row.title || '']]);
+    } catch (e) {
+      sheetSongIds.delete(row.song_id);
+      console.error('[Export] append failed:', e.message);
+    }
+  }
+
   async function startApp() {
     sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
@@ -525,6 +604,8 @@
 
     await loadSheet();
     setInterval(loadSheet, 5 * 60 * 1000);
+
+    if (await initExportSheet()) await backfillExportSheet();
 
     await poll();
     setInterval(poll, CONFIG.POLL_INTERVAL_MS);

@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sync Deck — Video/Audio Alignment</title>
+<script>window.__cdnFail=function(n){var r=document.getElementById("root")||document.body;r.innerHTML='<div style="font-family:system-ui;color:#E6EAED;background:#0E1113;padding:40px;line-height:1.6;height:100vh">'+"<h2 style='color:#FF5252'>Couldn\'t load "+n+"</h2><p>The app needs to download React/Babel from the internet. This screen means that download was blocked \u2014 usually a network drop or a work proxy/firewall blocking the CDN.</p><p style='color:#8A959C'>Try: check your connection, hard-refresh (Ctrl/Cmd+Shift+R), or open on a non-restricted network. If it persists at work, the CDN (cdn.jsdelivr.net) may be filtered.</p>"+'</div>';};</script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" onerror="__cdnFail('React')"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" onerror="__cdnFail('ReactDOM')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.4/babel.min.js" onerror="__cdnFail('Babel')"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4/dist/tus.min.js"></script>
+<style>
+  :root {
+    /* surfaces — cool near-black with a hardware elevation ramp */
+    --bg: #0A0D0F;
+    --panel: #12181B; --panel-2: #182025; --panel-3: #1E272C;
+    --line: #242D33; --line-soft: #1A2125;
+    --hair: rgba(255,255,255,.06); --hair-hi: rgba(255,255,255,.05);
+    --text: #EAEEF1; --muted: #93A0A7; --muted-2: #5E6A71;
+    /* accents — refined, used with discipline */
+    --cyan: #35D6C6; --amber: #F5B841; --red: #FF5A5A; --green: #46E08A; --violet: #C4A6FF;
+    --cyan-dim: rgba(53,214,198,.14); --violet-dim: rgba(196,166,255,.14); --amber-dim: rgba(245,184,65,.14);
+    --shadow-1: 0 2px 8px rgba(0,0,0,.35);
+    --shadow-2: 0 14px 40px -12px rgba(0,0,0,.6);
+    --inset-hi: inset 0 1px 0 var(--hair-hi);
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(130% 90% at 50% -20%, #141C20 0%, var(--bg) 55%) fixed;
+    color: var(--text); font-family: var(--sans); font-size: 14px;
+    overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  #root { height: 100vh; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 6px; }
+  ::selection { background: var(--cyan); color: #04201d; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #232c31; border: 3px solid transparent; background-clip: padding-box; border-radius: 8px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2f3a40; background-clip: padding-box; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes breathe { 0%,100% { box-shadow: 0 0 0 0 rgba(255,90,90,.55), 0 0 8px rgba(255,90,90,.8); } 50% { box-shadow: 0 0 0 4px rgba(255,90,90,0), 0 0 10px rgba(255,90,90,.6); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+
+  /* ============ CDN loader / empty scaffolds ============ */
+  .loader-wrap { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .loader-card { max-width: 560px; width: 100%; }
+  .loader-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .24em; text-transform: uppercase; color: var(--cyan); margin-bottom: 18px; }
+  .loader-card h1 { font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; margin-bottom: 14px; }
+  .loader-card p { color: var(--muted); line-height: 1.6; margin-bottom: 10px; }
+  .loader-steps { list-style: none; margin: 22px 0 26px; border-top: 1px solid var(--line); }
+  .loader-steps li { display: flex; gap: 14px; padding: 13px 2px; border-bottom: 1px solid var(--line); color: var(--muted); align-items: baseline; }
+  .loader-steps b { font-family: var(--mono); color: var(--cyan); font-size: 12px; }
+  .loader-steps span { color: var(--text); }
+  .loader-note { margin-top: 16px; font-size: 12.5px; color: var(--muted-2); line-height: 1.6; }
+
+  /* ============ shell ============ */
+  .shell { height: 100%; display: grid; grid-template-columns: 296px 1fr; }
+
+  /* ============ sidebar / cue list ============ */
+  .sidebar { background: linear-gradient(180deg, var(--panel), #0F1417); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; box-shadow: var(--shadow-1); }
+  .side-head { padding: 16px 16px 14px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .tally { width: 9px; height: 9px; border-radius: 50%; background: var(--red); animation: breathe 2.6s ease-in-out infinite; }
+  .brand h2 { font-size: 13px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+  .brand .sub { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted-2); margin-left: auto; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; }
+  .progress-line { margin-top: 14px; }
+  .progress-track { height: 5px; background: #0A0E10; border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #2fae86, var(--green)); box-shadow: 0 0 10px rgba(70,224,138,.5); transition: width .35s ease; }
+  .progress-label { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 8px; display: flex; justify-content: space-between; }
+
+  .side-cloud { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.02); font-size: 11.5px; color: var(--muted); text-align: left; transition: all .14s; }
+  .side-cloud:hover { border-color: var(--muted-2); color: var(--text); }
+  .side-cloud .cloud-dot { width: 8px; height: 8px; border-radius: 50%; background: #37424a; flex-shrink: 0; }
+  .side-cloud.off .cloud-dot { background: var(--muted-2); }
+  .side-cloud.done .cloud-dot { background: var(--green); box-shadow: 0 0 7px rgba(70,224,138,.6); }
+  .side-cloud.up { color: var(--cyan); border-color: rgba(53,214,198,.35); }
+  .side-cloud.up .cloud-dot { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: pulse 1s infinite; }
+  .side-cloud.err { color: #ff9a9a; border-color: rgba(255,90,90,.35); }
+  .side-cloud.err .cloud-dot { background: var(--red); }
+
+  .row-cloud { width: 7px; height: 7px; border-radius: 50%; background: #37424a; flex-shrink: 0; }
+  .row-cloud.done { background: var(--green); box-shadow: 0 0 6px rgba(70,224,138,.5); }
+  .row-cloud.up { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1s infinite; }
+  .row-cloud.err { background: var(--red); }
+
+  .song-list { overflow-y: auto; flex: 1; min-height: 0; padding: 6px 0; }
+  .song-row { width: 100%; text-align: left; padding: 10px 16px 10px 15px; border-left: 3px solid transparent; display: flex; gap: 11px; align-items: center; transition: background .12s, border-color .12s; }
+  .song-row:hover { background: rgba(255,255,255,.025); }
+  .song-row.active { background: linear-gradient(90deg, var(--cyan-dim), transparent 70%); border-left-color: var(--cyan); }
+  .song-id { font-family: var(--mono); font-size: 12px; color: var(--muted-2); min-width: 46px; }
+  .song-row.active .song-id { color: var(--cyan); }
+  .song-meta { min-width: 0; flex: 1; overflow: hidden; }
+  .song-title { display: block; font-size: 13px; font-weight: 550; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.005em; }
+  .song-artist { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .cut-pips { display: flex; gap: 3px; }
+  .pip { width: 6px; height: 6px; border-radius: 2px; background: #2a343a; transition: background .15s, box-shadow .15s; }
+  .pip.locked { background: var(--amber); box-shadow: 0 0 6px rgba(245,184,65,.6); }
+  .row-warn { font-family: var(--mono); font-size: 10px; color: var(--red); }
+
+  .side-load { display: flex; gap: 6px; margin-top: 13px; }
+  .side-load button { flex: 1; font-size: 11px; padding: 8px 4px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.02); transition: all .14s; }
+  .side-load button:hover { border-color: var(--cyan); color: var(--text); background: var(--cyan-dim); }
+  .list-empty { padding: 30px 16px; color: var(--muted-2); font-size: 12.5px; text-align: center; }
+
+  .side-foot { border-top: 1px solid var(--line); padding: 12px 14px; display: flex; gap: 8px; }
+  .ghost-btn { flex: 1; font-size: 12px; padding: 9px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); transition: all .14s; }
+  .ghost-btn:hover { border-color: var(--cyan); color: var(--text); background: var(--cyan-dim); }
+
+  /* ============ stage ============ */
+  .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; animation: fadeUp .28s ease; }
+  .empty-stage { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted-2); font-size: 14px; }
+  .stage-head { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 16px; background: linear-gradient(180deg, rgba(255,255,255,.015), transparent); }
+  .stage-title h1 { font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+  .stage-title .line { font-size: 12.5px; color: var(--muted); margin-top: 4px; display: flex; gap: 10px; align-items: center; }
+  .badge-id { font-family: var(--mono); color: var(--cyan); background: var(--cyan-dim); padding: 2px 7px; border-radius: 5px; font-size: 11.5px; letter-spacing: .02em; }
+  .nav-btns { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .nav-btn { border: 1px solid var(--line); border-radius: 8px; padding: 8px 13px; font-size: 12.5px; color: var(--muted); transition: all .14s; background: rgba(255,255,255,.02); }
+  .nav-btn:hover:not(:disabled) { border-color: var(--cyan); color: var(--text); background: var(--cyan-dim); }
+  .nav-btn:disabled { opacity: .3; cursor: default; }
+
+  .cut-tabs { display: flex; gap: 4px; padding: 12px 24px 0; border-bottom: 1px solid var(--line); }
+  .cut-tab { padding: 9px 14px 12px; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; display: flex; gap: 8px; align-items: center; position: relative; top: 1px; border-radius: 7px 7px 0 0; transition: color .12s, background .12s; }
+  .cut-tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+  .cut-tab.active { color: var(--text); border-bottom-color: var(--cyan); background: linear-gradient(180deg, var(--cyan-dim), transparent); }
+  .cut-tab .dot { width: 7px; height: 7px; border-radius: 50%; background: #37424a; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+  .cut-tab .dot.locked { background: var(--amber); box-shadow: 0 0 7px rgba(245,184,65,.7); }
+  .cut-code { font-family: var(--mono); font-size: 12px; letter-spacing: .02em; }
+  .cut-name { font-size: 12px; color: var(--muted-2); }
+
+  .deck { flex: 1; overflow-y: auto; padding: 20px 24px 28px; min-height: 0; }
+
+  /* channel strips */
+  .lane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 14px; overflow: hidden; box-shadow: var(--shadow-1), var(--inset-hi); }
+  .lane-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.015); }
+  .lane-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; padding: 4px 9px; border-radius: 5px; font-weight: 600; }
+  .lane-tag.audio { color: var(--cyan); background: var(--cyan-dim); box-shadow: inset 0 0 0 1px rgba(53,214,198,.25); }
+  .lane-tag.video { color: var(--violet); background: var(--violet-dim); box-shadow: inset 0 0 0 1px rgba(196,166,255,.25); }
+  .lane-head .tc { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .mark-btn { font-family: var(--mono); font-size: 11px; padding: 6px 11px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); transition: all .14s; background: rgba(255,255,255,.02); white-space: nowrap; }
+  .mark-btn:hover:not(:disabled) { border-color: var(--cyan); color: var(--text); }
+  .mark-btn:disabled { opacity: .35; cursor: default; }
+  .mark-btn.set { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+
+  .wave-wrap { position: relative; height: 96px; background: linear-gradient(180deg, #090C0E, #06090A); cursor: crosshair; }
+  .wave-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--cyan); pointer-events: none; box-shadow: 0 0 8px var(--cyan), 0 0 2px var(--cyan); }
+  .marker { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); pointer-events: none; box-shadow: 0 0 6px rgba(245,184,65,.7); }
+  .marker::after { content: ''; position: absolute; top: 0; left: -4px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid var(--amber); }
+  .wave-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; color: var(--muted-2); letter-spacing: .1em; }
+
+  .video-stage { position: relative; background: #000; display: flex; justify-content: center; }
+  .video-stage video { max-height: 300px; width: 100%; object-fit: contain; background: #000; display: block; }
+  .video-scrub { padding: 12px 14px; background: linear-gradient(180deg, #090C0E, #070A0B); }
+  .range { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 4px; background: #1a2226; outline: none; box-shadow: inset 0 0 0 1px var(--line); }
+  .range::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--cyan); cursor: pointer; box-shadow: 0 0 0 3px rgba(53,214,198,.2), 0 0 8px rgba(53,214,198,.5); }
+  .range::-moz-range-thumb { width: 15px; height: 15px; border: none; border-radius: 50%; background: var(--cyan); cursor: pointer; }
+  .transport { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .t-btn { border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; font-size: 12px; color: var(--muted); font-family: var(--mono); transition: all .14s; background: rgba(255,255,255,.02); }
+  .t-btn:hover { border-color: var(--cyan); color: var(--text); background: var(--cyan-dim); }
+
+  /* ============ sync console — the signature ============ */
+  .sync-bar { display: grid; grid-template-columns: 1.1fr 1fr auto; gap: 22px; align-items: stretch; background: linear-gradient(180deg, var(--panel-2), #12181B); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 4px; box-shadow: var(--shadow-2), var(--inset-hi); }
+  .offset-block { position: relative; overflow: hidden; background: radial-gradient(130% 150% at 50% 0%, rgba(53,214,198,.05), transparent 62%), #0A0E10; border: 1px solid var(--line); border-radius: 11px; padding: 13px 16px 15px; box-shadow: inset 0 1px 0 rgba(255,255,255,.03), inset 0 0 44px rgba(0,0,0,.45); }
+  .offset-block::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .4; background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px); -webkit-mask: linear-gradient(180deg, transparent, #000 30%, #000 70%, transparent); mask: linear-gradient(180deg, transparent, #000 30%, #000 70%, transparent); }
+  .offset-label { font-family: var(--mono); font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .offset-val { font-family: var(--mono); font-size: 34px; font-weight: 600; letter-spacing: -.02em; line-height: 1; font-variant-numeric: tabular-nums; transition: color .25s ease, text-shadow .25s ease; }
+  .offset-val.pos { color: var(--cyan); text-shadow: 0 0 20px rgba(53,214,198,.45); }
+  .offset-val.neg { color: var(--violet); text-shadow: 0 0 20px rgba(196,166,255,.45); }
+  .ometer { position: relative; height: 6px; margin-top: 12px; border-radius: 4px; background: #05080A; box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+  .ometer-zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted-2); opacity: .55; }
+  .ometer-fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; box-shadow: 0 0 10px currentColor; transition: left .25s ease, width .25s ease, background .25s ease; }
+  .offset-sub { font-family: var(--mono); font-size: 11px; color: var(--muted-2); margin-top: 10px; }
+
+  .nudge-grid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-content: center; }
+  .nudge-btn { font-family: var(--mono); font-size: 12px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); min-width: 54px; background: rgba(255,255,255,.02); transition: all .12s; }
+  .nudge-btn:hover { border-color: var(--cyan); color: var(--text); background: var(--cyan-dim); transform: translateY(-1px); }
+  .nudge-btn:active { transform: translateY(0); }
+
+  .sync-actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 190px; }
+  .auto-btn { background: linear-gradient(180deg, #d3b3ff, var(--violet)); color: #1a0f33; font-weight: 650; padding: 11px 16px; border-radius: 9px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 6px 18px -8px rgba(196,166,255,.7); transition: filter .14s, transform .12s, box-shadow .14s; }
+  .auto-btn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 10px 24px -8px rgba(196,166,255,.8); }
+  .auto-btn:disabled { opacity: .4; cursor: default; filter: none; transform: none; box-shadow: none; }
+  .preview-btn { background: linear-gradient(180deg, #4fe6d7, var(--cyan)); color: #04201d; font-weight: 650; padding: 11px 16px; border-radius: 9px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 6px 18px -8px rgba(53,214,198,.7); transition: filter .14s, transform .12s; }
+  .preview-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  .preview-btn.playing { background: linear-gradient(180deg, #ff7b7b, var(--red)); color: #fff; box-shadow: 0 6px 18px -8px rgba(255,90,90,.7); }
+  .lock-btn { background: transparent; color: var(--amber); border: 1px solid var(--amber); font-weight: 650; padding: 11px 16px; border-radius: 9px; font-size: 13px; transition: all .14s; }
+  .lock-btn.approve { background: linear-gradient(180deg, #63e89b, var(--green)); color: #042010; border-color: transparent; box-shadow: 0 6px 18px -8px rgba(70,224,138,.7); }
+  .lock-btn:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); }
+  .lock-btn:disabled { opacity: .4; cursor: default; }
+  .lock-btn.locked { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+  .reset-btn { border: 1px solid var(--line); color: var(--muted-2); font-size: 12px; padding: 8px; border-radius: 8px; transition: all .14s; background: transparent; }
+  .reset-btn:hover { border-color: var(--red); color: var(--red); }
+
+  .hint { font-size: 12px; color: var(--muted-2); text-align: center; margin-top: 16px; line-height: 1.7; padding: 0 10px; }
+  .hint b { color: var(--muted); font-weight: 600; }
+  kbd { font-family: var(--mono); font-size: 11px; background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--muted); }
+
+  /* ============ load panel ============ */
+  .load-panel { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; }
+  .load-inner { max-width: 520px; width: 100%; text-align: center; }
+  .load-inner h1 { font-size: 28px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; margin-bottom: 12px; }
+  .load-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--cyan); margin-bottom: 14px; }
+  .load-alt.primary { padding: 16px; font-weight: 600; }
+  .load-alt.primary:hover { box-shadow: 0 10px 26px -12px rgba(53,214,198,.6); }
+  .load-inner p { color: var(--muted); line-height: 1.6; }
+  .load-actions { margin: 4px 0 8px; display: flex; flex-direction: column; align-items: center; }
+  .pick-btn { display: inline-flex; align-items: center; gap: 10px; background: linear-gradient(180deg, #4fe6d7, var(--cyan)); color: #04201d; font-weight: 650; padding: 14px 22px; border-radius: 10px; font-size: 14px; box-shadow: 0 10px 26px -10px rgba(53,214,198,.7); transition: transform .12s ease, filter .12s ease; }
+  .pick-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  .load-or { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted-2); margin: 18px 0 12px; }
+  .load-alts { display: flex; gap: 10px; }
+  .load-alt { flex: 1; padding: 13px; border-radius: 10px; border: 1px solid var(--line); color: var(--text); background: rgba(255,255,255,.02); font-size: 13px; transition: all .14s; }
+  .load-alt:hover { border-color: var(--cyan); background: var(--cyan-dim); transform: translateY(-1px); }
+  .load-stats { margin-top: 16px; font-size: 12.5px; color: var(--cyan); }
+
+  /* ============ modals ============ */
+  .modal-back { position: fixed; inset: 0; background: rgba(4,6,7,.66); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; animation: fadeUp .18s ease; }
+  .modal { background: linear-gradient(180deg, var(--panel), #0F1417); border: 1px solid var(--line); border-radius: 16px; width: 100%; max-width: 720px; max-height: 82vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-2); animation: modalIn .2s ease; }
+  .modal-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; }
+  .modal-head h3 { font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+  .modal-head .x { margin-left: auto; color: var(--muted); font-size: 20px; line-height: 1; padding: 4px 9px; border-radius: 7px; transition: all .12s; }
+  .modal-head .x:hover { color: var(--text); background: rgba(255,255,255,.05); }
+  .modal-tabs { display: flex; gap: 6px; padding: 12px 22px 0; }
+  .modal-tab { font-family: var(--mono); font-size: 12px; padding: 8px 14px; border-radius: 8px 8px 0 0; color: var(--muted); border: 1px solid transparent; border-bottom: none; transition: all .12s; }
+  .modal-tab.active { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+  .modal-body { padding: 16px 22px; overflow-y: auto; }
+  .export-pre { font-family: var(--mono); font-size: 12px; line-height: 1.65; background: #06090A; border: 1px solid var(--line); border-radius: 10px; padding: 14px; white-space: pre; overflow-x: auto; color: var(--muted); max-height: 46vh; }
+  .modal-foot { padding: 14px 22px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  .modal-foot .count { font-size: 12.5px; color: var(--muted); margin-right: auto; }
+  .copy-btn { background: linear-gradient(180deg, #4fe6d7, var(--cyan)); color: #04201d; font-weight: 650; padding: 10px 18px; border-radius: 8px; font-size: 13px; transition: filter .12s; }
+  .copy-btn:hover { filter: brightness(1.05); }
+  .dl-btn { border: 1px solid var(--line); color: var(--text); padding: 10px 18px; border-radius: 8px; font-size: 13px; transition: all .12s; background: rgba(255,255,255,.02); }
+  .dl-btn:hover { border-color: var(--cyan); background: var(--cyan-dim); }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--cyan); color: var(--text); padding: 12px 20px; border-radius: 10px; font-size: 13px; z-index: 60; box-shadow: 0 12px 34px rgba(0,0,0,.55), 0 0 20px -6px rgba(53,214,198,.4); animation: fadeUp .2s ease; }
+
+  /* ============ cloud modal ============ */
+  .cl-field { margin-bottom: 12px; }
+  .cl-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .cl-field input { width: 100%; background: #06090A; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; color: var(--text); font-family: var(--mono); font-size: 12.5px; transition: border-color .12s; }
+  .cl-field input:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(53,214,198,.12); }
+  .cl-note { font-size: 12px; padding: 10px 12px; border-radius: 9px; margin-bottom: 12px; line-height: 1.5; }
+  .cl-note.ok { background: rgba(70,224,138,.08); color: var(--green); border: 1px solid rgba(70,224,138,.25); }
+  .cl-note.warn { background: rgba(255,90,90,.08); color: #ff9a9a; border: 1px solid rgba(255,90,90,.25); }
+  .cl-note.info { background: var(--cyan-dim); color: var(--muted); border: 1px solid var(--line); }
+  .cl-row { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--line-soft); }
+  .cl-row .id { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 52px; }
+  .cl-row .nm { flex: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cl-dot { width: 8px; height: 8px; border-radius: 50%; background: #2a343a; }
+  .cl-dot.done { background: var(--green); box-shadow: 0 0 7px rgba(70,224,138,.6); }
+  .cl-dot.err { background: var(--red); }
+  .cl-dot.busy { background: var(--amber); animation: pulse 1s infinite; }
+  .cl-mini { font-family: var(--mono); font-size: 10px; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); color: var(--muted); background: rgba(255,255,255,.02); transition: all .12s; }
+  .cl-mini:hover:not(:disabled) { border-color: var(--cyan); color: var(--text); }
+  .cl-mini:disabled { opacity: .4; cursor: default; }
+  .cl-bar { height: 5px; background: #06090A; border-radius: 3px; overflow: hidden; width: 90px; box-shadow: inset 0 0 0 1px var(--line); }
+  .cl-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #2fae86, var(--cyan)); transition: width .2s; }
+  .cl-primary { background: linear-gradient(180deg, #4fe6d7, var(--cyan)); color: #04201d; font-weight: 650; padding: 10px 16px; border-radius: 8px; font-size: 13px; transition: filter .12s; }
+  .cl-primary:hover:not(:disabled) { filter: brightness(1.05); }
+  .cl-primary:disabled { opacity: .45; cursor: default; }
+  .cl-list { max-height: 40vh; overflow-y: auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+<script>
+window.addEventListener("error",function(e){
+  var root=document.getElementById("root");
+  if(root && (!root.innerHTML || root.innerHTML.length<20)){
+    root.innerHTML='<div style="font-family:system-ui;color:#E6EAED;background:#0E1113;padding:40px;line-height:1.6;height:100vh;overflow:auto">'
+      +"<h2 style='color:#FF5252'>Something errored while starting up</h2>"
+      +"<p style='color:#8A959C'>Copy this and send it to Claude:</p>"
+      +"<pre style='background:#171B1E;border:1px solid #262C31;border-radius:8px;padding:14px;white-space:pre-wrap;color:#F5B72E'>"
+      +String((e && (e.message||e.error)) || e)+"</pre></div>";
+  }
+});
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* ---------- Cut Names Dictionary ---------- */
+const CUT_NAMES = { 
+  "001": "OG", 
+  "002": "New", 
+  "003": "Hot", 
+  "004": "Ext", 
+  "005": "Add", 
+  "010": "TALS" 
+};
+
+const FPS = 25;
+const FRAME = 1 / FPS;
+const LS_KEY = "syncdeck.offsets.v1";
+const LS_LABELS = "syncdeck.cutlabels.v2";
+const CSV_HEADER = ["ext_id","artist","title","cut","cut_name","video_offset_s"];
+
+/* ---------- time formatting ---------- */
+function fmtSec(t) {
+  if (t == null || isNaN(t)) return "—";
+  const sign = t < 0 ? "-" : ""; const a = Math.abs(t);
+  const m = Math.floor(a / 60), s = Math.floor(a % 60), ms = Math.round((a - Math.floor(a)) * 1000);
+  return sign + String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0") + "." + String(ms).padStart(3,"0");
+}
+function fmtTC(t) {
+  if (t == null || isNaN(t)) return "--:--:--:--";
+  const sign = t < 0 ? "-" : ""; const a = Math.abs(t);
+  const h = Math.floor(a/3600), m = Math.floor((a%3600)/60), s = Math.floor(a%60), f = Math.floor((a-Math.floor(a))*FPS);
+  return sign + [h,m,s,f].map(x => String(x).padStart(2,"0")).join(":");
+}
+function fmtOffset(v) { if (v == null || isNaN(v)) return "0.000"; return (v >= 0 ? "+" : "") + v.toFixed(3); }
+
+/* ---------- FFT (iterative radix-2, in place) ---------- */
+function fft(re, im, inverse) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const tr = re[i]; re[i] = re[j]; re[j] = tr; const ti = im[i]; im[i] = im[j]; im[j] = ti; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (inverse ? 2 : -2) * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cwr = 1, cwi = 0;
+      for (let k = 0; k < half; k++) {
+        const a = i + k, b = i + k + half;
+        const vr = re[b] * cwr - im[b] * cwi, vi = re[b] * cwi + im[b] * cwr;
+        re[b] = re[a] - vr; im[b] = im[a] - vi; re[a] = re[a] + vr; im[a] = im[a] + vi;
+        const ncwr = cwr * wr - cwi * wi; cwi = cwr * wi + cwi * wr; cwr = ncwr;
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
+function nextPow2(n) { let p = 1; while (p < n) p <<= 1; return p; }
+const SYNC_RATE = 200; // onset-envelope rate (Hz)
+
+/* ---------- folder ingestion ---------- */
+function ingestFiles(fileList) {
+  const files = Array.from(fileList);
+  const songs = {};
+  const ensure = (id) => { if (!songs[id]) songs[id] = { extId: id, artist: "", title: "", video: null, cuts: {} }; return songs[id]; };
+  for (const f of files) {
+    const path = (f.webkitRelativePath || f.name).replace(/\\/g, "/");
+    const parts = path.split("/");
+    const name = parts[parts.length - 1];
+    const lower = name.toLowerCase();
+    if (/\.(mp4|mov|webm|m4v)$/.test(lower)) {
+      const m = name.match(/(\d{6})/); if (!m) continue;
+      const id = m[1]; const song = ensure(id); song.video = f;
+      const base = name.replace(/\.(mp4|mov|webm|m4v)$/i, "");
+      const bits = base.split(" - ");
+      if (bits.length >= 3) { song.artist = bits[1].trim(); song.title = bits.slice(2).join(" - ").trim(); }
+      else if (bits.length === 2) { song.title = bits[1].trim(); }
+      continue;
+    }
+    if (/\.(mp3|wav|m4a|aac|ogg)$/.test(lower)) {
+      let id = null;
+      for (let i = parts.length - 2; i >= 0; i--) { if (/^\d{4,}$/.test(parts[i])) { id = parts[i]; break; } }
+      if (!id) continue;
+      const code = name.replace(/\.(mp3|wav|m4a|aac|ogg)$/i, "").trim();
+      ensure(id).cuts[code] = f;
+      continue;
+    }
+  }
+  return Object.values(songs).filter(s => Object.keys(s.cuts).length > 0).sort((a, b) => a.extId.localeCompare(b.extId));
+}
+
+/* ---------- Spectral-flux onset envelope (robust to level / master differences) ---------- */
+function computeOnsetEnv(mono, sampleRate, targetRate) {
+  // decimate to ~11kHz (plenty for rhythmic onsets) to keep the FFT loop cheap
+  const D = Math.max(1, Math.round(sampleRate / 11025));
+  const dsRate = sampleRate / D;
+  const dsLen = Math.floor(mono.length / D);
+  if (dsLen < 1024) return new Float32Array(0);
+  const ds = new Float32Array(dsLen);
+  for (let i = 0; i < dsLen; i++) { let s = 0; const b = i * D; for (let k = 0; k < D; k++) s += mono[b + k] || 0; ds[i] = s / D; }
+
+  const win = 512, half = win >> 1;
+  const hop = Math.max(1, Math.round(dsRate / targetRate));
+  const nFrames = Math.max(0, 1 + Math.floor((dsLen - win) / hop));
+  if (nFrames < 8) return new Float32Array(0);
+  const nativeRate = dsRate / hop;
+
+  const hann = new Float32Array(win);
+  for (let i = 0; i < win; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (win - 1));
+  const re = new Float32Array(win), im = new Float32Array(win);
+  let prev = new Float32Array(half), cur = new Float32Array(half);
+  const native = new Float32Array(nFrames);
+
+  for (let f = 0; f < nFrames; f++) {
+    const start = f * hop;
+    for (let i = 0; i < win; i++) { re[i] = (ds[start + i] || 0) * hann[i]; im[i] = 0; }
+    fft(re, im, false);
+    let flux = 0;
+    for (let k = 1; k < half; k++) {
+      const mag = Math.log1p(1000 * Math.sqrt(re[k] * re[k] + im[k] * im[k])); // log-compress -> level robust
+      cur[k] = mag;
+      const d = mag - prev[k];
+      if (d > 0) flux += d;                                                    // half-wave rectified spectral flux
+    }
+    native[f] = flux;
+    const t = prev; prev = cur; cur = t;
+  }
+
+  // resample onto an EXACT targetRate grid so two files of different sample rates stay comparable
+  const outLen = Math.max(1, Math.floor((nFrames - 1) * (targetRate / nativeRate)));
+  const env = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const sp = (i * nativeRate) / targetRate, i0 = Math.floor(sp), frac = sp - i0;
+    const a = native[i0] || 0, b = native[i0 + 1] || a;
+    env[i] = a + (b - a) * frac;
+  }
+  return env;
+}
+
+async function decodeAudioData(file) {
+  const arr = await file.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  const audio = await ctx.decodeAudioData(arr);
+  const duration = audio.duration;
+
+  // downmix to mono (more robust than a single channel for cross-file matching)
+  const nch = audio.numberOfChannels;
+  const len = audio.length;
+  const mono = new Float32Array(len);
+  for (let c = 0; c < nch; c++) { const ch = audio.getChannelData(c); for (let i = 0; i < len; i++) mono[i] += ch[i]; }
+  if (nch > 1) for (let i = 0; i < len; i++) mono[i] /= nch;
+
+  // 1. Visual peaks for the canvas (900 buckets)
+  const vizBuckets = 900;
+  const vizBlock = Math.max(1, Math.floor(len / vizBuckets));
+  const peaks = new Float32Array(vizBuckets);
+  for (let i = 0; i < vizBuckets; i++) {
+    let max = 0; const start = i * vizBlock;
+    for (let j = 0; j < vizBlock; j += 8) { const v = Math.abs(mono[start + j] || 0); if (v > max) max = v; }
+    peaks[i] = max;
+  }
+
+  // 2. Spectral-flux onset envelope for auto-sync (exact 200 Hz)
+  const onsetEnv = computeOnsetEnv(mono, audio.sampleRate, SYNC_RATE);
+
+  ctx.close();
+  return { peaks, onsetEnv, envRate: SYNC_RATE, duration };
+}
+
+/* ---------- Auto-sync: normalized (sliding-Pearson) cross-correlation of onset envelopes ---------- */
+/* Returns { offset, confidence(0..1), clarity, quality } or null if no usable envelopes. */
+function computeAutoSyncOffset(audioData, videoData) {
+  if (!audioData || !videoData) return null;
+  const aEnv = audioData.onsetEnv, vEnv = videoData.onsetEnv;
+  const rate = audioData.envRate || SYNC_RATE;
+  if (!aEnv || !vEnv) return null;
+  const La = aEnv.length, Lv = vEnv.length;
+  if (La < 40 || Lv < 40) return null;
+
+  const maxLag = Math.min(Math.max(La, Lv) - 1, Math.round(45 * rate)); // search within +/-45s
+  const minShort = Math.min(La, Lv);
+  const minOverlap = Math.max(Math.round(0.45 * minShort), Math.round(8 * rate));
+
+  // Sum_i a[i]*v[i+L] for all lags, via FFT correlation:  ifft( conj(FFT a) * FFT v )
+  const N = nextPow2(La + Lv);
+  const Ar = new Float32Array(N), Ai = new Float32Array(N);
+  const Vr = new Float32Array(N), Vi = new Float32Array(N);
+  Ar.set(aEnv); Vr.set(vEnv);
+  fft(Ar, Ai, false); fft(Vr, Vi, false);
+  const Pr = new Float32Array(N), Pi = new Float32Array(N);
+  for (let k = 0; k < N; k++) { Pr[k] = Ar[k] * Vr[k] + Ai[k] * Vi[k]; Pi[k] = Ar[k] * Vi[k] - Ai[k] * Vr[k]; }
+  fft(Pr, Pi, true);
+  const cross = (L) => Pr[(((L % N) + N) % N)];
+
+  // prefix sums for per-lag overlap mean/variance -> true sliding Pearson correlation
+  const pa = new Float64Array(La + 1), pa2 = new Float64Array(La + 1);
+  for (let i = 0; i < La; i++) { pa[i + 1] = pa[i] + aEnv[i]; pa2[i + 1] = pa2[i] + aEnv[i] * aEnv[i]; }
+  const pv = new Float64Array(Lv + 1), pv2 = new Float64Array(Lv + 1);
+  for (let i = 0; i < Lv; i++) { pv[i + 1] = pv[i] + vEnv[i]; pv2[i + 1] = pv2[i] + vEnv[i] * vEnv[i]; }
+
+  const OFF = maxLag;
+  const corr = new Float64Array(2 * maxLag + 1).fill(-2);
+  let bestL = 0, bestC = -2;
+  for (let L = -maxLag; L <= maxLag; L++) {
+    const lo = Math.max(0, -L), hi = Math.min(La, Lv - L), n = hi - lo;
+    if (n < minOverlap) continue;
+    const sa = pa[hi] - pa[lo], sa2 = pa2[hi] - pa2[lo];
+    const sv = pv[hi + L] - pv[lo + L], sv2 = pv2[hi + L] - pv2[lo + L];
+    const num = n * cross(L) - sa * sv;
+    const da = n * sa2 - sa * sa, dv = n * sv2 - sv * sv;
+    if (da <= 1e-9 || dv <= 1e-9) continue;
+    const c = num / Math.sqrt(da * dv);
+    corr[L + OFF] = c;
+    if (c > bestC) { bestC = c; bestL = L; }
+  }
+  if (bestC <= -1) return null;
+
+  // clarity = winning peak vs next-best peak at least 0.4s away (rejects ambiguous/periodic matches)
+  const guard = Math.round(0.4 * rate);
+  let second = -2;
+  for (let L = -maxLag; L <= maxLag; L++) { if (Math.abs(L - bestL) <= guard) continue; if (corr[L + OFF] > second) second = corr[L + OFF]; }
+  const clarity = second > 0 ? bestC / second : (bestC > 0 ? 4 : 1);
+
+  // parabolic interpolation -> sub-sample (sub-5ms) offset
+  let delta = 0;
+  const cm = corr[bestL - 1 + OFF], c0 = corr[bestL + OFF], cp = corr[bestL + 1 + OFF];
+  if (cm > -1 && cp > -1) { const den = cm - 2 * c0 + cp; if (Math.abs(den) > 1e-9) delta = (0.5 * (cm - cp)) / den; if (delta > 1 || delta < -1) delta = 0; }
+
+  const confidence = Math.max(0, bestC);
+  // reject clearly bad matches
+  if (confidence < 0.22 || clarity < 1.12) return null;
+  const quality = (confidence >= 0.45 && clarity >= 1.25) ? "strong" : "weak";
+  const offset = Math.round(((bestL + delta) / rate) * 1000) / 1000;
+  return { offset, confidence, clarity, quality };
+}
+
+/* ================= App ================= */
+function App() {
+  const [rawFiles, setRawFiles] = useState([]);
+  const [rootName, setRootName] = useState("");
+  const [selId, setSelId] = useState(null);
+  const [selCut, setSelCut] = useState(null);
+  const [offsets, setOffsets] = useState(() => { try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch { return {}; } });
+  const [labels, setLabels] = useState(() => { try { return { ...CUT_NAMES, ...(JSON.parse(localStorage.getItem(LS_LABELS) || "{}")) }; } catch { return { ...CUT_NAMES }; } });
+  const [showExport, setShowExport] = useState(false);
+  const [showCloud, setShowCloud] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [sb, setSb] = useState(null);
+  const [session, setSession] = useState(null);
+  const [cloudUp, setCloudUp] = useState({});
+  const songsRef = useRef(), videosRef = useRef();
+  const cloudUpRef = useRef({}), songsMirrorRef = useRef([]), uploadingRef = useRef(false);
+
+  useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(offsets)); }, [offsets]);
+  useEffect(() => { localStorage.setItem(LS_LABELS, JSON.stringify(labels)); }, [labels]);
+
+  const flashToast = useCallback((msg) => { setToast(msg); window.clearTimeout(flashToast._t); flashToast._t = window.setTimeout(() => setToast(null), 1900); }, []);
+
+  const songs = useMemo(() => ingestFiles(rawFiles), [rawFiles]);
+  const hasSongs = songs.length > 0;
+
+  const addFiles = (list, label) => {
+    const arr = Array.from(list || []); if (!arr.length) return;
+    if (!rootName) { const first = arr[0].webkitRelativePath || ""; setRootName(first.split("/")[0] || label || "media"); }
+    setRawFiles(prev => prev.concat(arr));
+  };
+  const rawStats = useMemo(() => {
+    let a = 0, v = 0;
+    for (const f of rawFiles) { const n = (f.name || "").toLowerCase(); if (/\.(mp4|mov|webm|m4v)$/.test(n)) v++; else if (/\.(mp3|wav|m4a|aac|ogg)$/.test(n)) a++; }
+    return { audio: a, video: v };
+  }, [rawFiles]);
+  const reload = () => { setRawFiles([]); setRootName(""); setSelId(null); setSelCut(null); };
+
+  /* ---- Supabase: restore a prior sign-in so ingest can auto-upload ---- */
+  useEffect(() => {
+    let saved; try { saved = JSON.parse(localStorage.getItem(LS_SB) || "{}"); } catch { saved = {}; }
+    if (!saved.url || !saved.anon) return;
+    try {
+      const client = makeClient(saved.url, saved.anon);
+      setSb(client);
+      client.auth.getSession().then(({ data }) => { if (data.session) setSession(data.session); }).catch(() => {});
+    } catch (e) { /* supabase lib blocked by network */ }
+  }, []);
+
+  useEffect(() => { cloudUpRef.current = cloudUp; }, [cloudUp]);
+  useEffect(() => { songsMirrorRef.current = songs; }, [songs]);
+  const cloudSet = useCallback((k, patch) => setCloudUp(m => ({ ...m, [k]: { ...(m[k] || {}), ...patch } })), []);
+
+  const syncSongToCloud = useCallback(async (song) => {
+    if (!sb || !session) return;
+    let saved; try { saved = JSON.parse(localStorage.getItem(LS_SB) || "{}"); } catch { saved = {}; }
+    const { data } = await sb.auth.getSession();
+    const token = data.session && data.session.access_token;
+    if (!token) throw new Error("Session expired — reconnect in Cloud");
+    const jobs = [];
+    if (song.video) jobs.push([videoKeyOf(song), song.video]);
+    for (const c of Object.keys(song.cuts)) jobs.push([audioKeyOf(song, c), song.cuts[c]]);
+    for (const [k, file] of jobs) {
+      const st = cloudUpRef.current[k];
+      if (st && (st.state === "done" || st.state === "up")) continue;
+      cloudSet(k, { state: "up", pct: 0 });
+      await uploadResumable(saved.url, token, saved.anon, k, file, (f) => cloudSet(k, { pct: Math.round(f * 100) }));
+      cloudSet(k, { state: "done", pct: 100 });
+    }
+    await upsertSongMetaAll(sb, song, offsets, labels);
+  }, [sb, session, offsets, labels, cloudSet]);
+
+  /* a song needs syncing only if some file key is untried (prevents auto-retry loops) */
+  const songNeedsSync = useCallback((s) => {
+    const keys = []; if (s.video) keys.push(videoKeyOf(s));
+    for (const c of Object.keys(s.cuts)) keys.push(audioKeyOf(s, c));
+    return keys.some(k => !cloudUpRef.current[k]);
+  }, []);
+
+  useEffect(() => {
+    if (!sb || !session || uploadingRef.current) return;
+    if (!songs.some(songNeedsSync)) return;
+    uploadingRef.current = true;
+    (async () => {
+      let done = 0, fail = 0;
+      while (true) {
+        const pending = songsMirrorRef.current.filter(songNeedsSync);
+        if (!pending.length) break;
+        for (const s of pending) {
+          try { await syncSongToCloud(s); done++; }
+          catch (e) {
+            fail++;
+            const keys = []; if (s.video) keys.push(videoKeyOf(s));
+            for (const c of Object.keys(s.cuts)) keys.push(audioKeyOf(s, c));
+            keys.forEach(k => { if (!cloudUpRef.current[k] || cloudUpRef.current[k].state !== "done") cloudSet(k, { state: "err", msg: (e.message || String(e)).slice(0, 140) }); });
+          }
+        }
+      }
+      uploadingRef.current = false;
+      if (fail) flashToast("☁ " + done + " synced · " + fail + " failed — open Cloud for the error");
+      else if (done) flashToast("☁ Synced " + done + " song" + (done === 1 ? "" : "s") + " to Supabase");
+    })();
+  }, [songs, session, sb, syncSongToCloud, songNeedsSync, cloudSet, flashToast]);
+
+  const cloudSummary = useMemo(() => {
+    let up = 0, done = 0, err = 0;
+    for (const k in cloudUp) { const s = cloudUp[k].state; if (s === "up") up++; else if (s === "done") done++; else if (s === "err") err++; }
+    return { up, done, err };
+  }, [cloudUp]);
+
+  useEffect(() => {
+    if (!hasSongs) { if (selId !== null) { setSelId(null); setSelCut(null); } return; }
+    if (!selId || !songs.find(s => s.extId === selId)) { setSelId(songs[0].extId); setSelCut(Object.keys(songs[0].cuts).sort()[0]); }
+  }, [songs]);
+
+  const selSong = useMemo(() => songs.find(s => s.extId === selId), [songs, selId]);
+  const cutCodes = useMemo(() => selSong ? Object.keys(selSong.cuts).sort() : [], [selSong]);
+  const totalCuts = useMemo(() => songs.reduce((n, s) => n + Object.keys(s.cuts).length, 0), [songs]);
+  const lockedCount = useMemo(() => {
+    let n = 0; for (const s of songs) for (const c of Object.keys(s.cuts)) if (offsets[s.extId + ":" + c]?.locked) n++; return n;
+  }, [songs, offsets]);
+
+  const key = selId && selCut ? selId + ":" + selCut : null;
+  const setOffsetFor = (k, patch) => setOffsets(o => ({ ...o, [k]: { ...(o[k] || {}), ...patch } }));
+
+  const gotoSong = (dir) => {
+    const idx = songs.findIndex(s => s.extId === selId);
+    const ni = idx + dir; if (ni < 0 || ni >= songs.length) return;
+    setSelId(songs[ni].extId); setSelCut(Object.keys(songs[ni].cuts).sort()[0]);
+  };
+
+  return (
+    <div className="shell">
+      <input ref={songsRef} type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={e => { addFiles(e.target.files, "Songs"); e.target.value = ""; }} />
+      <input ref={videosRef} type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={e => { addFiles(e.target.files, "Videos"); e.target.value = ""; }} />
+      <Sidebar
+        songs={songs} hasSongs={hasSongs} selId={selId} offsets={offsets} rootName={rootName}
+        onSelect={(id) => { setSelId(id); const s = songs.find(x => x.extId === id); setSelCut(Object.keys(s.cuts).sort()[0]); }}
+        locked={lockedCount} total={totalCuts} connected={!!session} cloud={cloudSummary} cloudUp={cloudUp}
+        onExport={() => setShowExport(true)} onCloud={() => setShowCloud(true)} onReload={reload}
+        onLoadSongs={() => songsRef.current.click()} onLoadVideos={() => videosRef.current.click()} />
+      {!hasSongs ? (
+        <LoadPanel stats={rawStats}
+          onSongs={() => songsRef.current.click()} onVideos={() => videosRef.current.click()} />
+      ) : selSong ? (
+        <Stage key={selSong.extId}
+          song={selSong} cutCodes={cutCodes} selCut={selCut} setSelCut={setSelCut}
+          labels={labels} offsets={offsets} offsetKey={key} setOffsetFor={setOffsetFor}
+          gotoSong={gotoSong} songIndex={songs.findIndex(s => s.extId === selId)} songCount={songs.length}
+          flashToast={flashToast} />
+      ) : <div className="empty-stage">Select a song from the list.</div>}
+      {showExport && <ExportModal songs={songs} offsets={offsets} labels={labels} onClose={() => setShowExport(false)} flashToast={flashToast} />}
+      {showCloud && <CloudModal songs={songs} offsets={offsets} labels={labels} onClose={() => setShowCloud(false)} flashToast={flashToast} sb={sb} session={session} setSb={setSb} setSession={setSession} />}
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+/* ================= Load panel ================= */
+function LoadPanel({ onSongs, onVideos, stats }) {
+  return (
+    <div className="load-panel">
+      <div className="load-inner">
+        <div className="load-eyebrow">Your library is empty</div>
+        <h1>Add media to get started</h1>
+        <p>Load your Songs and Videos folders — they'll pair up by external ID and appear in the library on the left.</p>
+        <div className="load-alts" style={{ marginTop: 22 }}>
+          <button className="load-alt primary" onClick={onSongs}>🎵 Add Songs folder</button>
+          <button className="load-alt primary" onClick={onVideos}>🎬 Add Videos folder</button>
+        </div>
+        {(stats.audio + stats.video) > 0 && (
+          <p className="load-stats">Loaded so far: <b>{stats.audio}</b> audio · <b>{stats.video}</b> video{stats.video > 0 && stats.audio === 0 ? " — now add the Songs folder to pair them up" : ""}</p>
+        )}
+        <p className="loader-note">Expects <span className="mono">Songs/&lt;extID&gt;/001.mp3</span> and <span className="mono">Videos/&lt;extID&gt; - Artist - Title.mp4</span>. Add them in either order — matching is tolerant. Nothing leaves your browser until you Publish to Cloud.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ================= Sidebar ================= */
+function Sidebar({ songs, hasSongs, selId, offsets, onSelect, locked, total, onExport, onCloud, onReload, rootName, onLoadSongs, onLoadVideos, connected, cloud, cloudUp }) {
+  const pct = total ? Math.round((locked / total) * 100) : 0;
+  const c = cloud || { up: 0, done: 0, err: 0 };
+  let cloudCls = "off", cloudTxt = "Not connected · sync off";
+  if (connected) {
+    if (c.up > 0) { cloudCls = "up"; cloudTxt = "Uploading to Supabase… " + c.up + " left"; }
+    else if (c.err > 0) { cloudCls = "err"; cloudTxt = c.err + " upload" + (c.err === 1 ? "" : "s") + " failed · open Cloud"; }
+    else if (c.done > 0) { cloudCls = "done"; cloudTxt = "Synced · " + c.done + " file" + (c.done === 1 ? "" : "s") + " in Supabase"; }
+    else { cloudCls = "done"; cloudTxt = "Connected · uploads auto-sync"; }
+  }
+  return (
+    <aside className="sidebar">
+      <div className="side-head">
+        <div className="brand"><span className="tally" /><h2>Sync Deck</h2><span className="sub">{rootName ? rootName.slice(0, 12) : "local"}</span></div>
+        <button className={"side-cloud " + cloudCls} onClick={onCloud} title="Open cloud settings">
+          <span className="cloud-dot" /> {cloudTxt}
+        </button>
+        <div className="side-load">
+          <button onClick={onLoadSongs}>＋ Songs</button>
+          <button onClick={onLoadVideos}>＋ Videos</button>
+        </div>
+        {hasSongs && (
+          <div className="progress-line">
+            <div className="progress-track"><div className="progress-fill" style={{ width: pct + "%" }} /></div>
+            <div className="progress-label"><span>{locked} / {total} cuts locked</span><span>{pct}%</span></div>
+          </div>
+        )}
+      </div>
+      <div className="song-list">
+        {!hasSongs ? <div className="list-empty">No media loaded yet.</div> : songs.map(s => {
+          const codes = Object.keys(s.cuts).sort(); const noVideo = !s.video;
+          const cs = cloudUp ? songCloudState(s, cloudUp) : "";
+          return (
+            <button key={s.extId} className={"song-row" + (s.extId === selId ? " active" : "")} onClick={() => onSelect(s.extId)}>
+              <span className="song-id">{s.extId}</span>
+              <span className="song-meta">
+                <span className="song-title">{s.title || "Untitled"}</span>
+                <span className="song-artist">{noVideo ? <span className="row-warn">no video matched</span> : (s.artist || "—")}</span>
+              </span>
+              {cs && <span className={"row-cloud " + cs} title={"cloud: " + cs} />}
+              <span className="cut-pips">{codes.map(c => <span key={c} className={"pip" + (offsets[s.extId + ":" + c]?.locked ? " locked" : "")} />)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="side-foot">
+        <button className="ghost-btn" onClick={onReload}>Reload</button>
+        <button className="ghost-btn" onClick={onExport}>Export ▸</button>
+        <button className="ghost-btn" onClick={onCloud}>☁ Cloud</button>
+      </div>
+    </aside>
+  );
+}
+
+/* ================= Stage ================= */
+function Stage({ song, cutCodes, selCut, setSelCut, labels, offsets, offsetKey, setOffsetFor, gotoSong, songIndex, songCount, flashToast }) {
+  const audioRef = useRef(); const videoRef = useRef(); const rafRef = useRef();
+  const [audioT, setAudioT] = useState(0); const [audioDur, setAudioDur] = useState(0);
+  const [videoT, setVideoT] = useState(0); const [videoDur, setVideoDur] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  
+  const [audioData, setAudioData] = useState(null); const [waveLoading, setWaveLoading] = useState(true);
+  const [videoData, setVideoData] = useState(null); const [vwaveState, setVwaveState] = useState("loading");
+  
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const [videoMuted, setVideoMuted] = useState(true);
+  const [audioMuted, setAudioMuted] = useState(false);
+  const canvasRef = useRef(); const vCanvasRef = useRef();
+
+  const rec = offsets[offsetKey] || {};
+  const audioFile = song.cuts[selCut];
+  const audioUrl = useMemo(() => audioFile ? URL.createObjectURL(audioFile) : null, [audioFile]);
+  const videoUrl = useMemo(() => song.video ? URL.createObjectURL(song.video) : null, [song.video]);
+  useEffect(() => () => { audioUrl && URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+  useEffect(() => () => { videoUrl && URL.revokeObjectURL(videoUrl); }, [videoUrl]);
+
+  useEffect(() => {
+    let alive = true; setAudioData(null); setWaveLoading(true);
+    if (!audioFile) return;
+    decodeAudioData(audioFile).then((data) => { if (!alive) return; setAudioData(data); setAudioDur(data.duration); setWaveLoading(false); }).catch(() => { if (alive) setWaveLoading(false); });
+    return () => { alive = false; };
+  }, [audioFile]);
+
+  useEffect(() => {
+    let alive = true; setVideoData(null); setVwaveState("loading");
+    if (!song.video) { setVwaveState("fail"); return; }
+    decodeAudioData(song.video).then((data) => { if (!alive) return; setVideoData(data); setVwaveState("ok"); }).catch(() => { if (alive) setVwaveState("fail"); });
+    return () => { alive = false; };
+  }, [song.video]);
+
+  useEffect(() => { if (videoRef.current) videoRef.current.muted = videoMuted; }, [videoMuted, videoUrl]);
+  useEffect(() => { if (audioRef.current) audioRef.current.muted = audioMuted; }, [audioMuted, audioUrl]);
+
+  useEffect(() => {
+    const cv = canvasRef.current; if (!cv || !audioData) return;
+    const peaks = audioData.peaks;
+    const dpr = window.devicePixelRatio || 1; const w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+    const mid = h / 2, n = peaks.length;
+    for (let i = 0; i < n; i++) { const x = (i / n) * w; const amp = peaks[i] * (h * 0.46); ctx.fillStyle = "#2b3a3e"; ctx.fillRect(x, mid - amp, Math.max(1, w / n - 0.5), amp * 2); }
+  }, [audioData]);
+
+  useEffect(() => {
+    const cv = vCanvasRef.current; if (!cv || !videoData) return;
+    const peaks = videoData.peaks;
+    const dpr = window.devicePixelRatio || 1; const w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+    const mid = h / 2, n = peaks.length;
+    for (let i = 0; i < n; i++) { const x = (i / n) * w; const amp = peaks[i] * (h * 0.46); ctx.fillStyle = "#4a3a63"; ctx.fillRect(x, mid - amp, Math.max(1, w / n - 0.5), amp * 2); }
+  }, [videoData]);
+
+  const videoOffset = rec.videoOffset ?? 0;
+  const videoOffsetRef = useRef(videoOffset);
+  useEffect(() => { videoOffsetRef.current = videoOffset; }, [videoOffset]);
+
+  const tick = useCallback(() => {
+    const a = audioRef.current, v = videoRef.current;
+    if (a) setAudioT(a.currentTime);
+    if (a && v && !a.paused) {
+      const expected = a.currentTime + videoOffsetRef.current;
+      if (expected < 0) { if (!v.paused) v.pause(); if (v.currentTime !== 0) v.currentTime = 0; }
+      else { if (v.paused) v.play().catch(() => {}); if (Math.abs(v.currentTime - expected) > 0.09) v.currentTime = Math.min(expected, (v.duration || 1e9) - 0.05); }
+    }
+    if (v) setVideoT(v.currentTime);
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
+  useEffect(() => { rafRef.current = requestAnimationFrame(tick); return () => cancelAnimationFrame(rafRef.current); }, [tick]);
+
+  useEffect(() => { setPlaying(false); const a = audioRef.current, v = videoRef.current; if (a) { a.pause(); a.currentTime = 0; } if (v) v.pause(); }, [selCut, song.extId]);
+
+  const togglePlay = () => {
+    const a = audioRef.current, v = videoRef.current; if (!a) return;
+    if (a.paused) { const vt = a.currentTime + videoOffsetRef.current; if (v) { if (vt >= 0) { v.currentTime = Math.max(0, vt); v.play().catch(() => {}); } else v.pause(); } a.play().catch(() => {}); setPlaying(true); }
+    else { a.pause(); if (v) v.pause(); setPlaying(false); }
+  };
+  const seekAudio = (t) => { const a = audioRef.current; if (a) { a.currentTime = Math.max(0, Math.min(t, a.duration || t)); setAudioT(a.currentTime); } };
+  const seekVideo = (t) => { const v = videoRef.current; if (v) { v.currentTime = Math.max(0, Math.min(t, v.duration || t)); setVideoT(v.currentTime); } };
+  const markAudio = () => setOffsetFor(offsetKey, { audioPoint: audioRef.current?.currentTime ?? 0 });
+  const markVideo = () => setOffsetFor(offsetKey, { videoPoint: videoRef.current?.currentTime ?? 0 });
+
+  const canComputeFromMarks = rec.audioPoint != null && rec.videoPoint != null;
+  const computedOffset = canComputeFromMarks ? (rec.videoPoint - rec.audioPoint) : null;
+  const applyMarks = () => { if (!canComputeFromMarks) return; setOffsetFor(offsetKey, { videoOffset: rec.videoPoint - rec.audioPoint }); flashToast("Offset set from vocal-start marks"); };
+  const nudge = (d) => setOffsetFor(offsetKey, { videoOffset: +((videoOffset + d).toFixed(4)) });
+
+  const handleAutoSync = () => {
+    if (!audioData || !videoData) {
+      flashToast("Waveforms not ready yet");
+      return;
+    }
+    setAutoSyncing(true);
+    setTimeout(() => {
+      try {
+        const res = computeAutoSyncOffset(audioData, videoData);
+        if (res) {
+          const conf = Math.round(res.confidence * 100);
+          setOffsetFor(offsetKey, { videoOffset: res.offset, autoConf: conf, autoQuality: res.quality });
+          if (res.quality === "strong") flashToast("⚡ Auto-synced " + fmtOffset(res.offset) + "s · match " + conf + "%");
+          else flashToast("⚡ Best guess " + fmtOffset(res.offset) + "s · low confidence " + conf + "% — preview to verify");
+        } else {
+          setOffsetFor(offsetKey, { autoConf: null, autoQuality: null });
+          flashToast("No confident match found — align by ear or with marks");
+        }
+      } catch (err) {
+        flashToast("Auto sync error: " + err.message);
+      } finally {
+        setAutoSyncing(false);
+      }
+    }, 40);
+  };
+
+  const lock = () => {
+    const patch = { videoOffset, locked: true, lockedAt: new Date().toISOString() };
+    if (canComputeFromMarks && Math.abs(computedOffset - videoOffset) > 0.001) patch.videoOffset = computedOffset;
+    setOffsetFor(offsetKey, patch);
+    flashToast("✓ Approved & Locked: " + song.extId + " · " + selCut);
+  };
+  const unlock = () => setOffsetFor(offsetKey, { locked: false });
+  const clearRec = () => {
+    setOffsetFor(offsetKey, { videoOffset: 0, audioPoint: null, videoPoint: null, locked: false, lockedAt: null });
+    flashToast("Offset reset to 0.000s");
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+      else if (e.key === "a") markAudio();
+      else if (e.key === "v") markVideo();
+      else if (e.key === "l") { lock(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(e.shiftKey ? -FRAME : -0.2); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); nudge(e.shiftKey ? FRAME : 0.2); }
+      else if (e.key === "[") seekAudio((audioRef.current?.currentTime || 0) - 1);
+      else if (e.key === "]") seekAudio((audioRef.current?.currentTime || 0) + 1);
+    };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const waveClick = (e) => { const r = e.currentTarget.getBoundingClientRect(); const frac = (e.clientX - r.left) / r.width; seekAudio(frac * (audioDur || audioRef.current?.duration || 0)); };
+  const waveClickVideo = (e) => { const r = e.currentTarget.getBoundingClientRect(); const frac = (e.clientX - r.left) / r.width; seekVideo(frac * (videoDur || videoRef.current?.duration || 0)); };
+  const offClass = videoOffset > 0 ? "pos" : videoOffset < 0 ? "neg" : "";
+
+  return (
+    <div className="stage">
+      <audio ref={audioRef} src={audioUrl} muted={audioMuted} onLoadedMetadata={(e) => setAudioDur(e.target.duration)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+      <div className="stage-head">
+        <div className="stage-title">
+          <h1>{song.title || "Untitled"}</h1>
+          <div className="line"><span className="badge-id">{song.extId}</span><span>{song.artist || "—"}</span></div>
+        </div>
+        <div className="nav-btns">
+          <button className="nav-btn" disabled={songIndex <= 0} onClick={() => gotoSong(-1)}>‹ Prev</button>
+          <span className="nav-btn mono" style={{ pointerEvents: "none" }}>{songIndex + 1}/{songCount}</span>
+          <button className="nav-btn" disabled={songIndex >= songCount - 1} onClick={() => gotoSong(1)}>Next ›</button>
+        </div>
+      </div>
+      <div className="cut-tabs">
+        {cutCodes.map(c => { const r = offsets[song.extId + ":" + c]; return (
+          <button key={c} className={"cut-tab" + (c === selCut ? " active" : "")} onClick={() => setSelCut(c)}>
+            <span className={"dot" + (r?.locked ? " locked" : "")} /><span className="cut-code">{c}</span><span className="cut-name">{labels[c] || ""}</span>
+          </button>); })}
+      </div>
+      <div className="deck">
+        <div className="lane">
+          <div className="lane-head">
+            <span className="lane-tag audio">Audio · cut {selCut} ({labels[selCut] || ""})</span>
+            <button className={"mark-btn" + (audioMuted ? "" : " set")} onClick={() => setAudioMuted(m => !m)} title="Mute/unmute this cut during preview">{audioMuted ? "🔇 muted" : "🔊 audio"}</button>
+            <button className={"mark-btn" + (rec.audioPoint != null ? " set" : "")} onClick={markAudio}>{rec.audioPoint != null ? "◖ Vocal ✓ " + fmtSec(rec.audioPoint) : "◖ Vocal start (A)"}</button>
+            <span className="tc mono">{fmtSec(audioT)}</span>
+          </div>
+          <div className="wave-wrap" onClick={waveClick}>
+            <canvas ref={canvasRef} />
+            {waveLoading && <div className="wave-loading">reading waveform…</div>}
+            {audioDur > 0 && <div className="playhead" style={{ left: (audioT / audioDur * 100) + "%" }} />}
+            {rec.audioPoint != null && audioDur > 0 && <div className="marker" style={{ left: (rec.audioPoint / audioDur * 100) + "%" }} />}
+          </div>
+        </div>
+        <div className="lane">
+          <div className="lane-head">
+            <span className="lane-tag video">Video</span>
+            <button className={"mark-btn" + (videoMuted ? "" : " set")} onClick={() => setVideoMuted(m => !m)} disabled={!song.video} title="Mute/unmute the video's own audio during preview">{videoMuted ? "🔇 muted" : "🔊 audio"}</button>
+            <button className={"mark-btn" + (rec.videoPoint != null ? " set" : "")} onClick={markVideo} disabled={!song.video}>{rec.videoPoint != null ? "◖ Vocal ✓ " + fmtSec(rec.videoPoint) : "◖ Vocal start (V)"}</button>
+            <span className="tc mono">{fmtSec(videoT)}</span>
+          </div>
+          {song.video ? (<>
+            <div className="video-stage"><video ref={videoRef} src={videoUrl} muted={videoMuted} playsInline onLoadedMetadata={(e) => { setVideoDur(e.target.duration); if (videoRef.current) videoRef.current.muted = videoMuted; }} /></div>
+            <div className="wave-wrap" onClick={waveClickVideo} title="click to seek video">
+              <canvas ref={vCanvasRef} />
+              {vwaveState === "loading" && <div className="wave-loading">reading video audio…</div>}
+              {vwaveState === "fail" && <div className="wave-loading">video waveform unavailable — align by ear</div>}
+              {videoDur > 0 && <div className="playhead" style={{ left: (videoT / videoDur * 100) + "%" }} />}
+              {rec.videoPoint != null && videoDur > 0 && <div className="marker" style={{ left: (rec.videoPoint / videoDur * 100) + "%" }} />}
+            </div>
+            <div className="video-scrub">
+              <input className="range" type="range" min="0" max={videoDur || 0} step="0.01" value={Math.min(videoT, videoDur || 0)} onChange={(e) => seekVideo(+e.target.value)} />
+              <div className="transport">
+                <button className="t-btn" onClick={() => seekVideo(videoT - FRAME)}>◂ frame</button>
+                <button className="t-btn" onClick={() => seekVideo(videoT + FRAME)}>frame ▸</button>
+                <button className="t-btn" onClick={() => seekVideo(videoT - 1)}>−1s</button>
+                <button className="t-btn" onClick={() => seekVideo(videoT + 1)}>+1s</button>
+                <span className="tc mono" style={{ marginLeft: "auto", color: "var(--muted-2)" }}>{fmtTC(videoT)}</span>
+              </div>
+            </div></>) : (<div className="wave-loading" style={{ position: "static", height: 120 }}>No matching video for {song.extId}</div>)}
+        </div>
+        <div className="sync-bar">
+          <div className="offset-block">
+            <div className="offset-label">Video offset</div>
+            <div className={"offset-val " + offClass}>{fmtOffset(videoOffset)}<span style={{ fontSize: 14, color: "var(--muted-2)" }}>s</span></div>
+            <div className="ometer">
+              <div className="ometer-zero" />
+              <div className="ometer-fill" style={(() => {
+                const mag = Math.min(1, Math.abs(videoOffset) / 3);
+                const col = videoOffset > 0 ? "var(--cyan)" : videoOffset < 0 ? "var(--violet)" : "var(--muted-2)";
+                if (videoOffset >= 0) return { left: "50%", width: (mag * 50) + "%", background: col, color: col };
+                return { left: (50 - mag * 50) + "%", width: (mag * 50) + "%", background: col, color: col };
+              })()} />
+            </div>
+            <div className="offset-sub">video @ audio 0:00 · {fmtTC(videoOffset)}</div>
+            {rec.autoConf != null && (
+              <div className="offset-sub" style={{ color: rec.autoQuality === "strong" ? "var(--green)" : "var(--amber)", marginTop: 4 }}>
+                ⚡ auto-sync match {rec.autoConf}%{rec.autoQuality === "strong" ? "" : " · verify by ear"}
+              </div>
+            )}
+            {canComputeFromMarks && Math.abs(computedOffset - videoOffset) > 0.001 && (<button className="mark-btn set" style={{ marginTop: 8 }} onClick={applyMarks}>Align vocals → {fmtOffset(computedOffset)}</button>)}
+          </div>
+          <div className="nudge-grid">
+            <button className="nudge-btn" onClick={() => nudge(-1)}>−1s</button>
+            <button className="nudge-btn" onClick={() => nudge(-0.2)}>−0.2</button>
+            <button className="nudge-btn" onClick={() => nudge(-FRAME)}>−1f</button>
+            <button className="nudge-btn" onClick={() => nudge(FRAME)}>+1f</button>
+            <button className="nudge-btn" onClick={() => nudge(0.2)}>+0.2</button>
+            <button className="nudge-btn" onClick={() => nudge(1)}>+1s</button>
+          </div>
+          <div className="sync-actions">
+            <button className="auto-btn" onClick={handleAutoSync} disabled={!song.video || waveLoading || vwaveState !== "ok" || autoSyncing}>
+              {autoSyncing ? "⚡ Syncing..." : "⚡ Auto Sync"}
+            </button>
+            <button className={"preview-btn" + (playing ? " playing" : "")} onClick={togglePlay} disabled={!song.video}>{playing ? "■ Stop" : "▸ Preview sync"}</button>
+            {rec.locked ? (
+              <button className="lock-btn locked" onClick={unlock}>✓ Approved — unlock</button>
+            ) : (
+              <button className="lock-btn approve" onClick={lock}>✓ Approve & Lock (L)</button>
+            )}
+            <button className="reset-btn" onClick={clearRec}>↺ Reset Offset</button>
+          </div>
+        </div>
+        <div className="hint">⚡ <b>Auto Sync</b> cross-correlates the onset patterns of both tracks across the whole song and reports a confidence %. It's robust to the video being a different master. Always <b>▸ Preview</b> to confirm, then <b>✓ Approve & Lock</b> (<kbd>L</kbd>).</div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= Export ================= */
+function buildRows(songs, offsets, labels) {
+  const rows = [];
+  for (const s of songs) for (const c of Object.keys(s.cuts).sort()) {
+    const r = offsets[s.extId + ":" + c];
+    if (!r || !r.locked) continue;
+    rows.push({ extId: s.extId, artist: s.artist, title: s.title, cut: c, cutName: labels[c] || "", videoOffset: (r.videoOffset ?? 0) });
+  }
+  return rows;
+}
+function toCSV(rows) {
+  const esc = (v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [CSV_HEADER.join(",")];
+  for (const r of rows) lines.push([r.extId, r.artist, r.title, r.cut, r.cutName, r.videoOffset.toFixed(3)].map(esc).join(","));
+  return lines.join("\n");
+}
+function toJSON(rows) {
+  const out = {};
+  for (const r of rows) { out[r.extId] = out[r.extId] || { artist: r.artist, title: r.title, cuts: {} }; out[r.extId].cuts[r.cut] = { name: r.cutName, videoOffset: +r.videoOffset.toFixed(3) }; }
+  return JSON.stringify(out, null, 2);
+}
+function ExportModal({ songs, offsets, labels, onClose, flashToast }) {
+  const [tab, setTab] = useState("csv");
+  const rows = useMemo(() => buildRows(songs, offsets, labels), [songs, offsets, labels]);
+  const text = tab === "csv" ? toCSV(rows) : toJSON(rows);
+  const copy = async () => { try { await navigator.clipboard.writeText(text); flashToast("Copied to clipboard"); } catch { flashToast("Copy failed — select manually"); } };
+  const download = () => { const blob = new Blob([text], { type: tab === "csv" ? "text/csv" : "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = tab === "csv" ? "edge-tv-sync.csv" : "edge-tv-sync.json"; a.click(); URL.revokeObjectURL(a.href); };
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><h3>Export offsets</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="modal-tabs">
+          <button className={"modal-tab" + (tab === "csv" ? " active" : "")} onClick={() => setTab("csv")}>CSV</button>
+          <button className={"modal-tab" + (tab === "json" ? " active" : "")} onClick={() => setTab("json")}>JSON</button>
+        </div>
+        <div className="modal-body">{rows.length ? <pre className="export-pre">{text}</pre> : <div style={{ color: "var(--muted-2)", padding: "30px 0", textAlign: "center" }}>Nothing to export yet — lock a cut first.</div>}</div>
+        <div className="modal-foot">
+          <span className="count">{rows.length} locked cut{rows.length === 1 ? "" : "s"} · CSV pastes straight into Edge TV Info</span>
+          <button className="dl-btn" onClick={download}>Download</button>
+          <button className="copy-btn" onClick={copy}>Copy</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= Supabase cloud ================= */
+const LS_SB = "syncdeck.sb.v1";
+const BUCKET = "edge-tv";
+const extOf = (f) => { const n = f.name; const i = n.lastIndexOf("."); return i >= 0 ? n.slice(i) : ""; };
+const videoKeyOf = (song) => song.video ? ("videos/" + song.extId + (extOf(song.video) || ".mp4")) : null;
+const audioKeyOf = (song, cut) => "songs/" + song.extId + "/" + cut + (extOf(song.cuts[cut]) || ".mp3");
+
+function makeClient(url, key) {
+  if (!window.supabase || !window.supabase.createClient) throw new Error("Supabase library didn't load (network/proxy).");
+  return window.supabase.createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "syncdeck-sb-auth" } });
+}
+
+function uploadResumable(url, token, anonKey, key, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!window.tus) { reject(new Error("Uploader library (tus) didn't load.")); return; }
+    const up = new window.tus.Upload(file, {
+      endpoint: url.replace(/\/$/, "") + "/storage/v1/upload/resumable",
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      headers: { authorization: "Bearer " + token, apikey: anonKey, "x-upsert": "true" },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: 6 * 1024 * 1024,
+      metadata: { bucketName: BUCKET, objectName: key, contentType: file.type || "application/octet-stream", cacheControl: "3600" },
+      onError: reject,
+      onProgress: (sent, total) => onProgress && onProgress(total ? sent / total : 0),
+      onSuccess: () => resolve()
+    });
+    up.findPreviousUploads().then(prev => { if (prev && prev.length) up.resumeFromPreviousUpload(prev[0]); up.start(); }).catch(() => up.start());
+  });
+}
+
+async function upsertSongMeta(sb, song, offsets, labels) {
+  const { error: e1 } = await sb.from("edge_tv_song").upsert(
+    { ext_id: song.extId, artist: song.artist || null, title: song.title || null, video_key: videoKeyOf(song) },
+    { onConflict: "ext_id" });
+  if (e1) throw new Error(e1.message);
+  const rows = [];
+  for (const cut of Object.keys(song.cuts)) {
+    const rec = offsets[song.extId + ":" + cut];
+    if (!rec || !rec.locked) continue;
+    rows.push({ ext_id: song.extId, cut_code: cut, cut_name: labels[cut] || null, audio_key: audioKeyOf(song, cut), video_offset: rec.videoOffset ?? 0, locked: true, locked_at: rec.lockedAt || null });
+  }
+  if (rows.length) { const { error: e2 } = await sb.from("edge_tv_cut").upsert(rows, { onConflict: "ext_id,cut_code" }); if (e2) throw new Error(e2.message); }
+  return rows.length;
+}
+
+/* upsert song + ALL its cuts (used by auto-sync on ingest, before anything is locked) */
+async function upsertSongMetaAll(sb, song, offsets, labels) {
+  const { error: e1 } = await sb.from("edge_tv_song").upsert(
+    { ext_id: song.extId, artist: song.artist || null, title: song.title || null, video_key: videoKeyOf(song) },
+    { onConflict: "ext_id" });
+  if (e1) throw new Error("song row: " + e1.message);
+  const rows = [];
+  for (const cut of Object.keys(song.cuts)) {
+    const rec = offsets[song.extId + ":" + cut] || {};
+    rows.push({ ext_id: song.extId, cut_code: cut, cut_name: labels[cut] || null, audio_key: audioKeyOf(song, cut), video_offset: rec.videoOffset ?? 0, locked: !!rec.locked, locked_at: rec.lockedAt || null });
+  }
+  if (rows.length) { const { error: e2 } = await sb.from("edge_tv_cut").upsert(rows, { onConflict: "ext_id,cut_code" }); if (e2) throw new Error("cut rows: " + e2.message); }
+  return rows.length;
+}
+
+/* aggregate upload state of a song's files for the sidebar dot */
+function songCloudState(song, cloudUp) {
+  const keys = []; if (song.video) keys.push(videoKeyOf(song));
+  for (const c of Object.keys(song.cuts)) keys.push(audioKeyOf(song, c));
+  if (!keys.length) return "";
+  let up = false, err = false, done = 0;
+  for (const k of keys) { const s = cloudUp[k] && cloudUp[k].state; if (s === "up") up = true; else if (s === "err") err = true; else if (s === "done") done++; }
+  if (up) return "up"; if (err) return "err"; if (done === keys.length) return "done"; return "";
+}
+
+function CloudModal({ songs, offsets, labels, onClose, flashToast, sb, session, setSb, setSession }) {
+  const saved = (() => { try { return JSON.parse(localStorage.getItem(LS_SB) || "{}"); } catch { return {}; } })();
+  const [url, setUrl] = useState(saved.url || "https://mvqgyfbzljjelvsfyvky.supabase.co");
+  const [anon, setAnon] = useState(saved.anon || "sb_publishable_OQiCOC-ENZkCt9w5E8sUvQ_MbSAotzc");
+  const [email, setEmail] = useState(saved.email || "");
+  const [pw, setPw] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState({});
+
+  const connect = () => {
+    try { const client = makeClient(url.trim(), anon.trim()); setSb(client);
+      localStorage.setItem(LS_SB, JSON.stringify({ url: url.trim(), anon: anon.trim(), email: email.trim() }));
+      setStatus("Connected. Now log in."); flashToast("Supabase connected");
+    } catch (e) { setStatus(e.message); }
+  };
+  const login = async () => {
+    if (!sb) return; setBusy(true); setStatus("Signing in…");
+    const { data, error } = await sb.auth.signInWithPassword({ email: email.trim(), password: pw });
+    setBusy(false);
+    if (error) { setStatus("Login failed: " + error.message); return; }
+    setSession(data.session); setPw(""); setStatus(""); flashToast("Signed in");
+    localStorage.setItem(LS_SB, JSON.stringify({ url: url.trim(), anon: anon.trim(), email: email.trim() }));
+  };
+  const logout = async () => { if (sb) await sb.auth.signOut(); setSession(null); };
+
+  const setP = (id, patch) => setProg(p => ({ ...p, [id]: { ...(p[id] || {}), ...patch } }));
+
+  const publishSong = async (song) => {
+    if (!sb || !session) return;
+    setP(song.extId, { state: "busy", pct: 0, msg: "starting…" });
+    try {
+      const { data } = await sb.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("No session — log in again.");
+      const files = [];
+      if (song.video) files.push([videoKeyOf(song), song.video]);
+      for (const cut of Object.keys(song.cuts)) files.push([audioKeyOf(song, cut), song.cuts[cut]]);
+      let done = 0;
+      for (const [fkey, file] of files) {
+        setP(song.extId, { msg: "↑ " + fkey.split("/").pop() });
+        await uploadResumable(url.trim(), token, anon.trim(), fkey, file, (f) => setP(song.extId, { pct: Math.round(((done + f) / files.length) * 100) }));
+        done++;
+        setP(song.extId, { pct: Math.round((done / files.length) * 100) });
+      }
+      setP(song.extId, { msg: "syncing metadata…" });
+      const n = await upsertSongMeta(sb, song, offsets, labels);
+      setP(song.extId, { state: "done", pct: 100, msg: files.length + " files · " + n + " cuts" });
+    } catch (e) {
+      setP(song.extId, { state: "err", msg: (e.message || String(e)).slice(0, 80) });
+    }
+  };
+
+  const publishAll = async () => {
+    setBusy(true);
+    for (const s of songs) { await publishSong(s); }
+    setBusy(false);
+    flashToast("Publish run complete");
+  };
+
+  const loggedIn = !!session;
+  const missingLibs = !window.supabase;
+
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><h3>☁ Cloud sync</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          {missingLibs && <div className="cl-note warn">The Supabase library didn't load — likely a network/proxy block on cdn.jsdelivr.net. Publishing needs it; alignment &amp; CSV still work without it.</div>}
+          {status && <div className={"cl-note " + (status.toLowerCase().includes("fail") || status.toLowerCase().includes("didn't") ? "warn" : "info")}>{status}</div>}
+
+          {!loggedIn ? (<>
+            <div className="cl-field"><label>Project URL</label><input value={url} onChange={e => setUrl(e.target.value)} /></div>
+            <div className="cl-field"><label>Anon public key <span style={{ color: "var(--muted-2)" }}>(safe in-browser; RLS guards writes)</span></label><input value={anon} onChange={e => setAnon(e.target.value)} placeholder="eyJ…" /></div>
+            {!sb ? (
+              <button className="cl-primary" onClick={connect} disabled={!url.trim() || !anon.trim()}>Connect</button>
+            ) : (<>
+              <div className="cl-field"><label>Email</label><input value={email} onChange={e => setEmail(e.target.value)} placeholder="you@mediaworks.co.nz" /></div>
+              <div className="cl-field"><label>Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && login()} /></div>
+              <button className="cl-primary" onClick={login} disabled={busy || !email.trim() || !pw}>{busy ? "Signing in…" : "Log in"}</button>
+            </>)}
+          </>) : (<>
+            <div className="cl-note ok">Signed in as {session.user?.email}. New media auto-uploads to the <b>{BUCKET}</b> bucket the moment you add it. Use <b>Publish</b> below to re-push a song or sync locked offsets to edge_tv_song / edge_tv_cut.</div>
+            <div className="cl-list">
+              {songs.map(s => {
+                const p = prog[s.extId] || {};
+                const lockedCuts = Object.keys(s.cuts).filter(c => offsets[s.extId + ":" + c]?.locked).length;
+                return (
+                  <div className="cl-row" key={s.extId}>
+                    <span className={"cl-dot " + (p.state || "")} />
+                    <span className="id">{s.extId}</span>
+                    <span className="nm">{s.title || "Untitled"} <span style={{ color: "var(--muted-2)" }}>· {lockedCuts}/{Object.keys(s.cuts).length} locked{s.video ? "" : " · no video"}</span></span>
+                    {p.state === "busy" ? <span className="cl-bar"><i style={{ width: (p.pct || 0) + "%" }} /></span>
+                      : p.msg ? <span className="mono" style={{ fontSize: 10, color: p.state === "err" ? "var(--red)" : "var(--muted-2)" }}>{p.msg}</span> : null}
+                    <button className="cl-mini" onClick={() => publishSong(s)} disabled={busy || p.state === "busy"}>Publish</button>
+                  </div>
+                );
+              })}
+            </div>
+          </>)}
+        </div>
+        <div className="modal-foot">
+          {loggedIn ? (<>
+            <span className="count">Uploads resume automatically if a transfer drops</span>
+            <button className="dl-btn" onClick={logout}>Sign out</button>
+            <button className="cl-primary" onClick={publishAll} disabled={busy}>{busy ? "Publishing…" : "Publish all"}</button>
+          </>) : (
+            <span className="count">Config is stored locally in this browser</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
